@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import logging
 import os
 from typing import Iterable, Optional, Tuple
 
@@ -10,6 +11,7 @@ import pandas as pd
 
 
 FRED_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+logger = logging.getLogger(__name__)
 
 
 def _http_verify_setting():
@@ -38,12 +40,16 @@ async def _get_with_retries(client: httpx.AsyncClient, url: str, *, params: dict
             r = await client.get(url, params=params)
             # Retry transient upstream errors.
             if r.status_code in (429, 500, 502, 503, 504) and i < retries - 1:
+                logger.info("Transient upstream status %s for %s (attempt %s/%s), retrying", r.status_code, url, i + 1, retries)
                 await asyncio.sleep(1.5 * (i + 1))
                 continue
+            if i > 0 and r.status_code < 400:
+                logger.info("Recovered after retry for %s (attempt %s/%s)", url, i + 1, retries)
             return r
         except httpx.RequestError as e:
             last_err = e
             if i < retries - 1:
+                logger.info("Transient request error for %s: %s (attempt %s/%s), retrying", url, e.__class__.__name__, i + 1, retries)
                 await asyncio.sleep(1.5 * (i + 1))
                 continue
             raise
