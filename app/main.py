@@ -31,6 +31,11 @@ REPORT_CRON = os.environ.get("GRM_REPORT_CRON", "5 7 * * MON")
 
 
 
+def _err_text(e: Exception) -> str:
+    s = str(e).strip()
+    return s if s else e.__class__.__name__
+
+
 def _parse_cron(expr: str):
     parts = expr.strip().split()
     if len(parts) != 5:
@@ -60,7 +65,7 @@ async def refresh_all() -> None:
             rows = [(d.date().isoformat(), float(v)) for d, v in zip(df["date"], df["value"], strict=False)]
             db.upsert_observations(sid, rows)
         except Exception as e:
-            errors.append(f"FRED:{sid}:{e}")
+            errors.append(f"FRED:{sid}:{_err_text(e)}")
 
     # Equities via Stooq
     for t in EQUITY_TICKERS.keys():
@@ -69,7 +74,7 @@ async def refresh_all() -> None:
             rows = [(d.date().isoformat(), float(v)) for d, v in zip(df["date"], df["close"], strict=False)]
             db.upsert_observations(t, rows)
         except Exception as e:
-            errors.append(f"STOOQ:{t}:{e}")
+            errors.append(f"STOOQ:{t}:{_err_text(e)}")
 
     # Optional plugins
     for pid in get_enabled_plugins(db):
@@ -86,7 +91,7 @@ async def refresh_all() -> None:
                 rows = [(d.date().isoformat(), float(v)) for d, v in zip(df["date"], df["close"], strict=False)]
                 db.upsert_observations(p.series_id, rows)
         except Exception as e:
-            errors.append(f"PLUGIN:{pid}:{e}")
+            errors.append(f"PLUGIN:{pid}:{_err_text(e)}")
 
     # Geopolitics via GDELT (last 30 days for faster/more reliable API responses)
     g_start = dt.date.today() - dt.timedelta(days=30)
@@ -97,7 +102,7 @@ async def refresh_all() -> None:
             rows = [(d.date().isoformat(), float(v)) for d, v in zip(gdf["date"], gdf["volume"], strict=False)]
             db.upsert_observations("GDELT", rows)
     except Exception as e:
-        errors.append(f"GDELT:{e}")
+        errors.append(f"GDELT:{_err_text(e)}")
 
     db.set_meta("last_refresh", dt.datetime.now().isoformat(timespec="seconds"))
     db.set_meta("last_refresh_errors", " | ".join(errors)[:2000] if errors else "")

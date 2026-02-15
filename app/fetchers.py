@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import os
 from typing import Iterable, Optional, Tuple
@@ -30,6 +31,27 @@ def _as_date(s: str) -> dt.date:
     return dt.date.fromisoformat(s)
 
 
+async def _get_with_retries(client: httpx.AsyncClient, url: str, *, params: dict, retries: int = 3) -> httpx.Response:
+    last_err: Exception | None = None
+    for i in range(retries):
+        try:
+            r = await client.get(url, params=params)
+            # Retry transient upstream errors.
+            if r.status_code in (429, 500, 502, 503, 504) and i < retries - 1:
+                await asyncio.sleep(1.5 * (i + 1))
+                continue
+            return r
+        except httpx.RequestError as e:
+            last_err = e
+            if i < retries - 1:
+                await asyncio.sleep(1.5 * (i + 1))
+                continue
+            raise
+    if last_err:
+        raise last_err
+    raise RuntimeError("request failed")
+
+
 async def fetch_fred_series(series_id: str, *, start: Optional[dt.date] = None) -> pd.DataFrame:
     """Fetch a FRED series via the public fredgraph CSV endpoint (no API key required).
 
@@ -41,7 +63,7 @@ async def fetch_fred_series(series_id: str, *, start: Optional[dt.date] = None) 
         params["cosd"] = start.isoformat()
 
     async with httpx.AsyncClient(timeout=20, headers={"User-Agent": "global-risk-monitor/1.0"}, verify=_http_verify_setting()) as client:
-        r = await client.get(FRED_CSV_URL, params=params)
+        r = await _get_with_retries(client, FRED_CSV_URL, params=params)
         r.raise_for_status()
 
     from io import StringIO
@@ -71,7 +93,7 @@ async def fetch_stooq_daily_close(ticker: str, *, start: Optional[dt.date] = Non
     params = {"s": stooq_ticker.lower(), "i": "d"}
 
     async with httpx.AsyncClient(timeout=20, follow_redirects=True, verify=_http_verify_setting()) as client:
-        r = await client.get(url, params=params)
+        r = await _get_with_retries(client, url, params=params)
         r.raise_for_status()
 
     from io import StringIO
@@ -119,7 +141,7 @@ async def fetch_gdelt_daily_volume(
     timeout = httpx.Timeout(60.0, connect=20.0)
     async with httpx.AsyncClient(timeout=timeout, headers={"User-Agent": "global-risk-monitor/1.0"}, verify=_http_verify_setting()) as client:
         try:
-            r = await client.get(url, params=params)
+            r = await _get_with_retries(client, url, params=params)
         except httpx.ReadTimeout as e:
             raise ValueError("GDELT request timed out") from e
 
