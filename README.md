@@ -78,3 +78,13 @@ A scheduled weekly report is also sent via Telegram/Email when configured.
 
 - Refresh schedule: `GRM_CRON` (default: `0 7 * * MON`)
 - Report schedule: `GRM_REPORT_CRON` (default: `5 7 * * MON`)
+## Plugin extensions (optional)
+
+Enable optional signals in UI (**Settings & Reports → Manage plugins**) or via API:
+
+- `GET /api/plugins`
+- `PUT /api/plugins` with `{ "enabled": ["vix", "brent"] }`
+
+Built-in plugin ideas:
+- `vix`: VIX volatility stress trigger (`VIXCLS`)
+- `brent`: Brent crude shock trigger (`DCOILBRENTEU`)

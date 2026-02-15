@@ -89,6 +89,7 @@
   <h2>Settings & Reports</h2>
   <div class="row">
     <button class="btn secondary" id="btnThresholds">Edit thresholds</button>
+    <button class="btn secondary" id="btnPlugins">Manage plugins</button>
     <button class="btn secondary" id="btnReport">Generate weekly report</button>
     <button class="btn secondary" id="btnTestNotify">Send test notification</button>
   </div>
@@ -111,6 +112,20 @@
       <button class="btn" id="btnSave">Save</button>
     </div>
     <div class="hint" id="thresholdMsg"></div>
+  </div>
+</div>
+
+<div class="modal" id="pluginModal" style="display:none;">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h3>Plugins (optional signals)</h3>
+      <button class="btn small" id="btnClosePlugins">Close</button>
+    </div>
+    <div id="pluginForm" class="grid"></div>
+    <div class="row" style="justify-content:flex-end; gap:10px; margin-top:12px;">
+      <button class="btn" id="btnSavePlugins">Save plugins</button>
+    </div>
+    <div class="hint" id="pluginMsg"></div>
   </div>
 </div>
   </main>
@@ -169,6 +184,8 @@ async function getThresholds(){
 
 function openModal(){ document.getElementById('thresholdModal').style.display='flex'; }
 function closeModal(){ document.getElementById('thresholdModal').style.display='none'; }
+function openPluginModal(){ document.getElementById('pluginModal').style.display='flex'; }
+function closePluginModal(){ document.getElementById('pluginModal').style.display='none'; }
 
 function renderThresholdForm(th){
   const form = document.getElementById('thresholdForm');
@@ -206,6 +223,33 @@ async function saveThresholds(reset=false){
   }
 }
 
+async function getPlugins(){
+  const r = await fetch('/api/plugins');
+  return await r.json();
+}
+
+function renderPluginForm(payload){
+  const form = document.getElementById('pluginForm');
+  form.innerHTML = '';
+  (payload.plugins || []).forEach(p => {
+    const div = document.createElement('div');
+    div.className = 'field';
+    div.innerHTML = `<label><input type="checkbox" id="pl_${p.id}" ${p.enabled ? 'checked' : ''}> <b>${p.name}</b><br/><span class="hint">${p.description} • Trigger ${p.trigger_pct}%</span></label>`;
+    form.appendChild(div);
+  });
+}
+
+async function savePlugins(){
+  const payload = await getPlugins();
+  const ids = (payload.plugins || []).map(p => p.id).filter(id => {
+    const el = document.getElementById(`pl_${id}`);
+    return el && el.checked;
+  });
+  const r = await fetch('/api/plugins', {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({enabled: ids})});
+  const j = await r.json();
+  document.getElementById('pluginMsg').textContent = j.ok ? 'Saved. Run refresh to fetch plugin data.' : (j.error || 'Save failed');
+}
+
 async function generateReport(){
   const box = document.getElementById('reportBox');
   box.style.display = 'block';
@@ -226,7 +270,15 @@ document.getElementById('btnThresholds').addEventListener('click', async () => {
   renderThresholdForm(th);
   openModal();
 });
+document.getElementById('btnPlugins').addEventListener('click', async () => {
+  const p = await getPlugins();
+  renderPluginForm(p);
+  document.getElementById('pluginMsg').textContent = '';
+  openPluginModal();
+});
 document.getElementById('btnCloseModal').addEventListener('click', closeModal);
+document.getElementById('btnClosePlugins').addEventListener('click', closePluginModal);
+document.getElementById('btnSavePlugins').addEventListener('click', savePlugins);
 document.getElementById('btnSave').addEventListener('click', () => saveThresholds(false));
 document.getElementById('btnReset').addEventListener('click', async () => {
   // reset by deleting thresholds in local; easiest: send defaults from server by reloading defaults in JS via labels? We'll request current, but user wants defaults.
@@ -239,6 +291,7 @@ document.getElementById('btnReset').addEventListener('click', async () => {
 document.getElementById('btnReport').addEventListener('click', generateReport);
 document.getElementById('btnTestNotify').addEventListener('click', testNotify);
 document.getElementById('thresholdModal').addEventListener('click', (e) => { if(e.target.id==='thresholdModal') closeModal(); });
+document.getElementById('pluginModal').addEventListener('click', (e) => { if(e.target.id==='pluginModal') closePluginModal(); });
 
 (async () => {
   try {

@@ -90,7 +90,6 @@ async def fetch_gdelt_daily_volume(
         "mode": "timeline",
         "format": "json",
         "timelinesmooth": 0,
-        "format": "json",
         "startdatetime": fmt(start, "000000"),
         "enddatetime": fmt(end, "235959"),
         "timelinespan": "1d",

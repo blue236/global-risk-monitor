@@ -16,6 +16,7 @@ from .analytics import compute_triggers
 from .config import EQUITY_TICKERS, FRED_SERIES, GDELT_QUERY
 from .db import Database
 from .fetchers import fetch_fred_series, fetch_gdelt_daily_volume, fetch_stooq_daily_close
+from .plugins import PLUGIN_REGISTRY, compute_plugin_triggers, get_enabled_plugins, list_plugins, set_enabled_plugins
 from .settings import load_thresholds, save_thresholds, reset_thresholds, get_last_alert_hash, set_last_alert_hash, set_last_alert_at, set_last_report_at
 from .notifications import send_email, send_telegram
 from .reporting import generate_korean_report
@@ -69,6 +70,19 @@ async def refresh_all() -> None:
             db.upsert_observations(t, rows)
         except Exception as e:
             errors.append(f"STOOQ:{t}:{e}")
+
+    # Optional plugins (currently FRED-backed)
+    for pid in get_enabled_plugins(db):
+        p = PLUGIN_REGISTRY.get(pid)
+        if not p:
+            continue
+        try:
+            if p.source == "fred":
+                df = await fetch_fred_series(p.series_id, start=start)
+                rows = [(d.date().isoformat(), float(v)) for d, v in zip(df["date"], df["value"], strict=False)]
+                db.upsert_observations(p.series_id, rows)
+        except Exception as e:
+            errors.append(f"PLUGIN:{pid}:{e}")
 
     # Geopolitics via GDELT (last 60 days)
     g_start = dt.date.today() - dt.timedelta(days=60)
@@ -140,6 +154,10 @@ def _load_for_triggers() -> Dict[str, pd.DataFrame]:
         "msft": load_df("MSFT", "close").rename(columns={"close": "close"}),
         "geopolitics": load_df("GDELT", "volume").rename(columns={"volume": "volume"}),
     }
+    for pid in get_enabled_plugins(db):
+        p = PLUGIN_REGISTRY.get(pid)
+        if p and p.source == "fred":
+            data[pid] = load_df(p.series_id, "value")
     return data
 
 
@@ -158,8 +176,11 @@ def _compute_triggers_from_db() -> List[dict]:
         geopolitics=data["geopolitics"],
         cfg=cfg,
     )
-    # triggers are dataclasses; convert to plain dicts for JSON and templates
-    return [t.__dict__ for t in triggers]
+    out = [t.__dict__ for t in triggers]
+    out.extend(compute_plugin_triggers(data, get_enabled_plugins(db)))
+    order = {"ALERT": 0, "WATCH": 1, "OK": 2}
+    out.sort(key=lambda x: (order.get(x.get("status"), 9), x.get("key", "")))
+    return out
 
 
 async def _notify_if_needed(triggers: List[dict]) -> List[str]:
@@ -281,6 +302,21 @@ async def api_put_thresholds(payload: Dict = Body(...)):
 async def api_reset_thresholds():
     th = reset_thresholds(db)
     return {"ok": True, "thresholds": th}
+
+
+@app.get("/api/plugins")
+async def api_get_plugins():
+    return list_plugins(db)
+
+
+@app.put("/api/plugins")
+async def api_put_plugins(payload: Dict = Body(...)):
+    enabled = payload.get("enabled", []) if isinstance(payload, dict) else []
+    if not isinstance(enabled, list):
+        return {"ok": False, "error": "enabled must be a list"}
+    ids = set_enabled_plugins(db, [str(x) for x in enabled])
+    return {"ok": True, "enabled": ids, **list_plugins(db)}
+
 
 @app.get("/api/report")
 async def api_report():
