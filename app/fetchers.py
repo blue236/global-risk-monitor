@@ -24,22 +24,25 @@ async def fetch_fred_series(series_id: str, *, start: Optional[dt.date] = None) 
     if start:
         params["cosd"] = start.isoformat()
 
-    async with httpx.AsyncClient(timeout=20) as client:
+    async with httpx.AsyncClient(timeout=20, headers={"User-Agent": "global-risk-monitor/1.0"}) as client:
         r = await client.get(FRED_CSV_URL, params=params)
         r.raise_for_status()
 
-    # fredgraph CSV has columns: DATE, <SERIES_ID>
     from io import StringIO
 
     df = pd.read_csv(StringIO(r.text))
-    if "DATE" not in df.columns or series_id not in df.columns:
-        raise ValueError(f"Unexpected FRED CSV format for {series_id}")
+    if df.empty or len(df.columns) < 2:
+        raise ValueError(f"Unexpected FRED CSV format for {series_id}: empty or missing columns")
 
-    df = df.rename(columns={"DATE": "date", series_id: "value"})
+    # FRED currently uses observation_date,<SERIES>, but older examples often use DATE.
+    date_col = "observation_date" if "observation_date" in df.columns else ("DATE" if "DATE" in df.columns else df.columns[0])
+    value_col = series_id if series_id in df.columns else df.columns[1]
+
+    df = df.rename(columns={date_col: "date", value_col: "value"})
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     df["value"] = pd.to_numeric(df["value"], errors="coerce")
     df = df.dropna(subset=["date", "value"]).sort_values("date")
-    return df
+    return df[["date", "value"]]
 
 
 async def fetch_stooq_daily_close(ticker: str, *, start: Optional[dt.date] = None) -> pd.DataFrame:
@@ -95,10 +98,22 @@ async def fetch_gdelt_daily_volume(
         "timelinespan": "1d",
     }
 
-    async with httpx.AsyncClient(timeout=20) as client:
+    async with httpx.AsyncClient(timeout=20, headers={"User-Agent": "global-risk-monitor/1.0"}) as client:
         r = await client.get(url, params=params)
-        r.raise_for_status()
+
+    # GDELT may throttle with plain-text 429; treat as temporary empty data instead of hard failure.
+    if r.status_code == 429:
+        return pd.DataFrame(columns=["date", "volume"])
+
+    r.raise_for_status()
+    ctype = (r.headers.get("content-type") or "").lower()
+    if "json" not in ctype and not r.text.lstrip().startswith("{"):
+        return pd.DataFrame(columns=["date", "volume"])
+
+    try:
         data = r.json()
+    except Exception:
+        return pd.DataFrame(columns=["date", "volume"])
 
     timeline = data.get("timeline")
     if not timeline:
