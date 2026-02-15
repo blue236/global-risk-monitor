@@ -28,6 +28,7 @@ Environment variables:
 - `GRM_DATA_DIR` (default: `~/.global-risk-monitor`)
 - `GRM_DB_PATH` (default: `$GRM_DATA_DIR/risk_monitor.sqlite`)
 - `GRM_CRON` weekly refresh schedule in 5-part cron (default: `0 7 * * MON`)
+- `GRM_SSL_VERIFY` TLS verify policy for HTTP fetchers (`1` default, `0` to disable, or path to CA bundle)
 
 ## Dev / tests
 

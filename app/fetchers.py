@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
 from typing import Iterable, Optional, Tuple
 
 import httpx
@@ -8,6 +9,21 @@ import pandas as pd
 
 
 FRED_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+
+
+def _http_verify_setting():
+    """TLS verify policy from env.
+
+    - GRM_SSL_VERIFY=0/false/no/off -> disable verification
+    - GRM_SSL_VERIFY=/path/to/ca-bundle.pem -> use custom CA bundle
+    - default -> True
+    """
+    v = (os.getenv("GRM_SSL_VERIFY", "1") or "1").strip()
+    if v.lower() in {"0", "false", "no", "off"}:
+        return False
+    if v.lower() in {"1", "true", "yes", "on"}:
+        return True
+    return v
 
 
 def _as_date(s: str) -> dt.date:
@@ -24,7 +40,7 @@ async def fetch_fred_series(series_id: str, *, start: Optional[dt.date] = None) 
     if start:
         params["cosd"] = start.isoformat()
 
-    async with httpx.AsyncClient(timeout=20, headers={"User-Agent": "global-risk-monitor/1.0"}) as client:
+    async with httpx.AsyncClient(timeout=20, headers={"User-Agent": "global-risk-monitor/1.0"}, verify=_http_verify_setting()) as client:
         r = await client.get(FRED_CSV_URL, params=params)
         r.raise_for_status()
 
@@ -54,7 +70,7 @@ async def fetch_stooq_daily_close(ticker: str, *, start: Optional[dt.date] = Non
     url = f"https://stooq.com/q/d/l/"
     params = {"s": stooq_ticker.lower(), "i": "d"}
 
-    async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True, verify=_http_verify_setting()) as client:
         r = await client.get(url, params=params)
         r.raise_for_status()
 
@@ -98,7 +114,7 @@ async def fetch_gdelt_daily_volume(
         "timelinespan": "1d",
     }
 
-    async with httpx.AsyncClient(timeout=20, headers={"User-Agent": "global-risk-monitor/1.0"}) as client:
+    async with httpx.AsyncClient(timeout=20, headers={"User-Agent": "global-risk-monitor/1.0"}, verify=_http_verify_setting()) as client:
         r = await client.get(url, params=params)
 
     # GDELT may throttle with plain-text 429; treat as temporary empty data instead of hard failure.
