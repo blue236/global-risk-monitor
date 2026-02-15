@@ -84,8 +84,8 @@ async def refresh_all() -> None:
         except Exception as e:
             errors.append(f"PLUGIN:{pid}:{e}")
 
-    # Geopolitics via GDELT (last 60 days)
-    g_start = dt.date.today() - dt.timedelta(days=60)
+    # Geopolitics via GDELT (last 30 days for faster/more reliable API responses)
+    g_start = dt.date.today() - dt.timedelta(days=30)
     g_end = dt.date.today()
     try:
         gdf = await fetch_gdelt_daily_volume(GDELT_QUERY, start=g_start, end=g_end)

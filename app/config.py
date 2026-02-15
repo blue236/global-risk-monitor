@@ -47,5 +47,5 @@ EQUITY_TICKERS = {
 }
 
 
-GDELT_QUERY = 'tariff OR sanctions OR "export controls" OR "military conflict" OR blockade'
+GDELT_QUERY = '(tariff OR sanctions OR "export controls" OR "military conflict" OR blockade)'
 
