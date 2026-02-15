@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Global Risk Monitor</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1"></script>
+</head>
+<body>
+  <header class="header">
+    <div>
+      <h1>Global Risk Monitor</h1>
+      <p class="sub">Weekly risk trigger dashboard • Local server</p>
+    </div>
+    <div class="actions">
+      <form method="post" action="/refresh">
+        <button class="btn" type="submit">Refresh now</button>
+      </form>
+      <div class="meta">
+        <div><span class="k">Last refresh:</span> {{ last_refresh or "(never)" }}</div>
+        {% if last_errors %}
+        <div><span class="k">Last errors:</span> {{ last_errors }}</div>
+        {% endif %}
+        <div><span class="k">Timezone:</span> Local</div>
+      </div>
+    </div>
+  </header>
+
+  <main class="grid">
+    <section class="card">
+      <h2>Triggers</h2>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Status</th>
+            <th>Signal</th>
+            <th>Latest</th>
+            <th>WoW</th>
+            <th>Why</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for t in triggers %}
+          <tr>
+            <td><span class="pill {{ t.status|lower }}">{{ t.status }}</span></td>
+            <td>{{ t.name }}</td>
+            <td>{{ "%.4g"|format(t.latest_value) }} <span class="muted">({{ t.latest_date }})</span></td>
+            <td>
+              {% if t.wow_change_unit == 'bp' %}
+                {{ "%.1f"|format(t.wow_change) }} {{ t.wow_change_unit }}
+              {% else %}
+                {{ "%.2f"|format(t.wow_change) }}{{ t.wow_change_unit }}
+              {% endif %}
+            </td>
+            <td class="muted">{{ t.rationale }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <p class="hint">Tip: Use the API at <code>/api/series/&lt;SERIES_ID&gt;</code> (e.g., DGS10) for raw data.</p>
+    </section>
+
+    <section class="card">
+      <h2>US 10Y yield (DGS10)</h2>
+      <canvas id="chart_dgs10"></canvas>
+    </section>
+
+    <section class="card">
+      <h2>High Yield OAS (BAMLH0A0HYM2)</h2>
+      <canvas id="chart_hy"></canvas>
+    </section>
+
+    <section class="card">
+      <h2>USD broad index (DTWEXBGS)</h2>
+      <canvas id="chart_dxy"></canvas>
+    </section>
+
+    <section class="card">
+      <h2>Nasdaq proxy (QQQ)</h2>
+      <canvas id="chart_qqq"></canvas>
+    </section>
+
+    <section class="card">
+      <h2>Geopolitics volume (GDELT)</h2>
+      <canvas id="chart_gdelt"></canvas>
+    </section>
+<section class="card">
+  <h2>Settings & Reports</h2>
+  <div class="row">
+    <button class="btn secondary" id="btnThresholds">Edit thresholds</button>
+    <button class="btn secondary" id="btnReport">Generate weekly report</button>
+    <button class="btn secondary" id="btnTestNotify">Send test notification</button>
+  </div>
+  <pre class="report" id="reportBox" style="display:none;"></pre>
+  <div class="hint">
+    <div><b>Telegram</b>: set <code>TELEGRAM_BOT_TOKEN</code>, <code>TELEGRAM_CHAT_ID</code></div>
+    <div><b>Email</b>: set <code>SMTP_HOST</code>, <code>SMTP_PORT</code>, <code>SMTP_USER</code>, <code>SMTP_PASSWORD</code>, <code>SMTP_FROM</code>, <code>SMTP_TO</code></div>
+  </div>
+</section>
+
+<div class="modal" id="thresholdModal" style="display:none;">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h3>Trigger thresholds</h3>
+      <button class="btn small" id="btnCloseModal">Close</button>
+    </div>
+    <div id="thresholdForm" class="grid"></div>
+    <div class="row" style="justify-content:flex-end; gap:10px; margin-top:12px;">
+      <button class="btn secondary" id="btnReset">Reset to defaults</button>
+      <button class="btn" id="btnSave">Save</button>
+    </div>
+    <div class="hint" id="thresholdMsg"></div>
+  </div>
+</div>
+  </main>
+
+<script>
+async function fetchSeries(id) {
+  const r = await fetch(`/api/series/${id}`);
+  if (!r.ok) throw new Error(`Failed to load ${id}`);
+  return await r.json();
+}
+
+function mkLineChart(canvasId, labels, data, yLabel) {
+  const ctx = document.getElementById(canvasId);
+  new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: yLabel,
+        data,
+        tension: 0.2,
+        pointRadius: 0,
+        borderWidth: 2,
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: true } },
+      scales: {
+        x: { ticks: { maxTicksLimit: 8 } },
+        y: { ticks: { maxTicksLimit: 6 } }
+      }
+    }
+  });
+}
+
+const thresholdLabels = {
+  dgs10_bp: "10Y yield WoW change (bp)",
+  t5yifr_bp: "5y5y inflation WoW change (bp)",
+  hy_oas_bp: "High Yield OAS WoW widening (bp)",
+  dxy_pct: "DXY WoW % change",
+  qqq_pct: "QQQ WoW % change (<= triggers risk-off)",
+  nvda_pct: "NVDA WoW % change (<= triggers risk-off)",
+  msft_pct: "MSFT WoW % change (<= triggers risk-off)",
+  geopolitics_wow_pct: "GDELT WoW mention volume increase (%)",
+};
+
+let cachedThresholds = null;
+
+async function getThresholds(){
+  const r = await fetch('/api/thresholds');
+  const j = await r.json();
+  cachedThresholds = j.thresholds;
+  return j.thresholds;
+}
+
+function openModal(){ document.getElementById('thresholdModal').style.display='flex'; }
+function closeModal(){ document.getElementById('thresholdModal').style.display='none'; }
+
+function renderThresholdForm(th){
+  const form = document.getElementById('thresholdForm');
+  form.innerHTML = '';
+  Object.keys(thresholdLabels).forEach(k => {
+    const v = th[k];
+    const div = document.createElement('div');
+    div.className = 'field';
+    div.innerHTML = `<label><b>${thresholdLabels[k]}</b><br/><span class="hint">${k}</span></label>
+      <input type="number" step="any" id="th_${k}" value="${v}">`;
+    form.appendChild(div);
+  });
+}
+
+async function saveThresholds(reset=false){
+  const msg = document.getElementById('thresholdMsg');
+  msg.textContent = '';
+  const payload = {};
+  if(reset){
+    // send empty payload -> server merges defaults; but we want explicit defaults
+    const th = await getThresholds();
+    Object.keys(th).forEach(k => payload[k]=th[k]);
+  } else {
+    Object.keys(thresholdLabels).forEach(k => {
+      const el = document.getElementById(`th_${k}`);
+      payload[k] = parseFloat(el.value);
+    });
+  }
+  const r = await fetch('/api/thresholds', {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+  const j = await r.json();
+  if(j.ok){
+    msg.textContent = 'Saved. Reload the page to see trigger status updated.';
+  } else {
+    msg.textContent = 'Save failed.';
+  }
+}
+
+async function generateReport(){
+  const box = document.getElementById('reportBox');
+  box.style.display = 'block';
+  box.textContent = 'Generating...';
+  const r = await fetch('/api/report');
+  const j = await r.json();
+  box.textContent = j.text || JSON.stringify(j, null, 2);
+}
+
+async function testNotify(){
+  const r = await fetch('/api/notify/test', {method:'POST'});
+  const j = await r.json();
+  alert(j.ok ? 'Test notification sent (if configured).' : ('Failed: ' + (j.errors||[]).join(' | ')));
+}
+
+document.getElementById('btnThresholds').addEventListener('click', async () => {
+  const th = await getThresholds();
+  renderThresholdForm(th);
+  openModal();
+});
+document.getElementById('btnCloseModal').addEventListener('click', closeModal);
+document.getElementById('btnSave').addEventListener('click', () => saveThresholds(false));
+document.getElementById('btnReset').addEventListener('click', async () => {
+  // reset by deleting thresholds in local; easiest: send defaults from server by reloading defaults in JS via labels? We'll request current, but user wants defaults.
+  // We'll just fetch defaults by calling /api/thresholds then saving same (acts like keep); for true reset, user can delete ~/.global-risk-monitor/risk_monitor.sqlite
+  const r = await fetch('/api/thresholds/reset', {method:'POST'});
+  const j = await r.json();
+  renderThresholdForm(j.thresholds);
+  document.getElementById('thresholdMsg').textContent='Reset to defaults (saved).';
+});
+document.getElementById('btnReport').addEventListener('click', generateReport);
+document.getElementById('btnTestNotify').addEventListener('click', testNotify);
+document.getElementById('thresholdModal').addEventListener('click', (e) => { if(e.target.id==='thresholdModal') closeModal(); });
+
+(async () => {
+  try {
+    const dgs10 = await fetchSeries('DGS10');
+    mkLineChart('chart_dgs10', dgs10.labels, dgs10.values, 'Yield (%)');
+
+    const hy = await fetchSeries('BAMLH0A0HYM2');
+    mkLineChart('chart_hy', hy.labels, hy.values, 'Spread (%)');
+
+    const dxy = await fetchSeries('DTWEXBGS');
+    mkLineChart('chart_dxy', dxy.labels, dxy.values, 'Index');
+
+    const qqq = await fetchSeries('QQQ');
+    mkLineChart('chart_qqq', qqq.labels, qqq.values, 'Close');
+
+    const gdelt = await fetchSeries('GDELT');
+    mkLineChart('chart_gdelt', gdelt.labels, gdelt.values, 'Mentions');
+
+  } catch (e) {
+    console.error(e);
+  }
+})();
+</script>
+</body>
+</html>
