@@ -54,13 +54,17 @@ class Database:
             return con.total_changes
 
     def fetch_series(self, series_id: str, limit: int = 4000) -> List[Tuple[str, float]]:
+        """Return the most recent `limit` rows in ascending date order."""
         with self._connect() as con:
             cur = con.execute(
                 """
-                SELECT date, value FROM series_observations
-                WHERE series_id=?
+                SELECT date, value FROM (
+                  SELECT date, value FROM series_observations
+                  WHERE series_id=?
+                  ORDER BY date DESC
+                  LIMIT ?
+                ) t
                 ORDER BY date ASC
-                LIMIT ?
                 """,
                 (series_id, limit),
             )

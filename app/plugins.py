@@ -37,6 +37,22 @@ PLUGIN_REGISTRY: Dict[str, PluginDef] = {
         series_id="DCOILBRENTEU",
         trigger_pct=8.0,
     ),
+    "dram_price": PluginDef(
+        id="dram_price",
+        name="DRAM price proxy (semiconductor PPI)",
+        description="Producer price trend for semiconductor industry (FRED: PCU334413334413)",
+        source="fred",
+        series_id="PCU334413334413",
+        trigger_pct=3.0,
+    ),
+    "ai_memory": PluginDef(
+        id="ai_memory",
+        name="AI memory demand proxy (Micron)",
+        description="Micron weekly move as AI memory demand proxy (Stooq: MU.US)",
+        source="stooq",
+        series_id="MU",
+        trigger_pct=8.0,
+    ),
 }
 
 

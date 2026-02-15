@@ -71,7 +71,7 @@ async def refresh_all() -> None:
         except Exception as e:
             errors.append(f"STOOQ:{t}:{e}")
 
-    # Optional plugins (currently FRED-backed)
+    # Optional plugins
     for pid in get_enabled_plugins(db):
         p = PLUGIN_REGISTRY.get(pid)
         if not p:
@@ -80,6 +80,10 @@ async def refresh_all() -> None:
             if p.source == "fred":
                 df = await fetch_fred_series(p.series_id, start=start)
                 rows = [(d.date().isoformat(), float(v)) for d, v in zip(df["date"], df["value"], strict=False)]
+                db.upsert_observations(p.series_id, rows)
+            elif p.source == "stooq":
+                df = await fetch_stooq_daily_close(p.series_id, start=start)
+                rows = [(d.date().isoformat(), float(v)) for d, v in zip(df["date"], df["close"], strict=False)]
                 db.upsert_observations(p.series_id, rows)
         except Exception as e:
             errors.append(f"PLUGIN:{pid}:{e}")
@@ -156,8 +160,12 @@ def _load_for_triggers() -> Dict[str, pd.DataFrame]:
     }
     for pid in get_enabled_plugins(db):
         p = PLUGIN_REGISTRY.get(pid)
-        if p and p.source == "fred":
+        if not p:
+            continue
+        if p.source == "fred":
             data[pid] = load_df(p.series_id, "value")
+        elif p.source == "stooq":
+            data[pid] = load_df(p.series_id, "close").rename(columns={"close": "value"})
     return data
 
 

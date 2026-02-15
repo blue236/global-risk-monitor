@@ -10,14 +10,17 @@ from app.db import Database
 
 def test_db_upsert_and_fetch(tmp_path: Path):
     db = Database(tmp_path / "t.sqlite")
-    n = db.upsert_observations("X", [("2026-01-01", 1.0), ("2026-01-02", 2.0)])
-    assert n >= 2
+    n = db.upsert_observations("X", [("2026-01-01", 1.0), ("2026-01-02", 2.0), ("2026-01-03", 3.0)])
+    assert n >= 3
     rows = db.fetch_series("X")
-    assert rows == [("2026-01-01", 1.0), ("2026-01-02", 2.0)]
+    assert rows == [("2026-01-01", 1.0), ("2026-01-02", 2.0), ("2026-01-03", 3.0)]
+    # limit should return latest rows (still ascending)
+    rows_limited = db.fetch_series("X", limit=2)
+    assert rows_limited == [("2026-01-02", 2.0), ("2026-01-03", 3.0)]
     # update
-    db.upsert_observations("X", [("2026-01-02", 3.0)])
+    db.upsert_observations("X", [("2026-01-03", 4.0)])
     rows2 = db.fetch_series("X")
-    assert rows2[-1] == ("2026-01-02", 3.0)
+    assert rows2[-1] == ("2026-01-03", 4.0)
 
 
 def _mk_df(start: dt.date, values):
