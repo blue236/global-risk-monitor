@@ -6,6 +6,13 @@ source .venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
 
+if [ -f .env ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
+fi
+
 export GRM_DATA_DIR="${GRM_DATA_DIR:-$HOME/.global-risk-monitor}"
 export GRM_DB_PATH="${GRM_DB_PATH:-$GRM_DATA_DIR/risk_monitor.sqlite}"
 
