@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import os
 from pathlib import Path
 from typing import Dict, List
 
 import pandas as pd
 from apscheduler.schedulers.background import BackgroundScheduler
-from fastapi import FastAPI, Request, Body
+from fastapi import FastAPI, Request, Body, Form
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -29,6 +30,10 @@ DB_PATH = Path(os.environ.get("GRM_DB_PATH", str(DATA_DIR / "risk_monitor.sqlite
 SCHEDULE_CRON = os.environ.get("GRM_CRON", "0 7 * * MON")  # minute hour day month dow
 REPORT_CRON = os.environ.get("GRM_REPORT_CRON", "5 7 * * MON")
 
+AUTH_USER = os.environ.get("GRM_AUTH_USERNAME", "").strip()
+AUTH_PASS = os.environ.get("GRM_AUTH_PASSWORD", "").strip()
+AUTH_ENABLED = bool(AUTH_USER and AUTH_PASS)
+SESSION_SECRET = os.environ.get("GRM_SESSION_SECRET", "change-me-grm-session-secret")
 
 
 def _err_text(e: Exception) -> str:
@@ -50,6 +55,36 @@ templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
 app = FastAPI(title="Global Risk Monitor", version="0.1.0")
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
+
+
+def _auth_cookie_value() -> str:
+    raw = f"{AUTH_USER}:{AUTH_PASS}:{SESSION_SECRET}".encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _is_authenticated(request: Request) -> bool:
+    if not AUTH_ENABLED:
+        return True
+    return request.cookies.get("grm_auth") == _auth_cookie_value()
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    if not AUTH_ENABLED:
+        return await call_next(request)
+
+    path = request.url.path
+    allowed_prefixes = ("/static",)
+    allowed_exact = {"/login", "/api/health"}
+    if path in allowed_exact or path.startswith(allowed_prefixes):
+        return await call_next(request)
+
+    if _is_authenticated(request):
+        return await call_next(request)
+
+    if path.startswith("/api"):
+        return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
+    return RedirectResponse(url="/login", status_code=303)
 
 
 async def refresh_all() -> None:
@@ -261,6 +296,31 @@ async def _send_weekly_report() -> List[str]:
     set_last_report_at(db, now)
     return errors
 
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    if _is_authenticated(request):
+        return RedirectResponse(url="/", status_code=303)
+    return templates.TemplateResponse("login.html", {"request": request, "auth_enabled": AUTH_ENABLED, "error": None})
+
+
+@app.post("/login", response_class=HTMLResponse)
+async def login_submit(request: Request, username: str = Form(""), password: str = Form("")):
+    if not AUTH_ENABLED:
+        return RedirectResponse(url="/", status_code=303)
+    if username == AUTH_USER and password == AUTH_PASS:
+        resp = RedirectResponse(url="/", status_code=303)
+        resp.set_cookie("grm_auth", _auth_cookie_value(), httponly=True, samesite="lax")
+        return resp
+    return templates.TemplateResponse("login.html", {"request": request, "auth_enabled": AUTH_ENABLED, "error": "Invalid credentials"}, status_code=401)
+
+
+@app.post("/logout")
+async def logout(request: Request):
+    resp = RedirectResponse(url="/login", status_code=303)
+    resp.delete_cookie("grm_auth")
+    return resp
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     last_refresh = db.get_meta("last_refresh")
@@ -275,6 +335,7 @@ async def index(request: Request):
             "triggers": triggers,
             "last_refresh": last_refresh,
             "last_errors": last_errors,
+            "auth_enabled": AUTH_ENABLED,
         },
     )
 

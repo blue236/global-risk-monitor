@@ -16,4 +16,7 @@ fi
 export GRM_DATA_DIR="${GRM_DATA_DIR:-$HOME/.global-risk-monitor}"
 export GRM_DB_PATH="${GRM_DB_PATH:-$GRM_DATA_DIR/risk_monitor.sqlite}"
 
-uvicorn app.main:app --host 127.0.0.1 --port 8000
+export GRM_HOST="${GRM_HOST:-127.0.0.1}"
+export GRM_PORT="${GRM_PORT:-8000}"
+
+uvicorn app.main:app --host "$GRM_HOST" --port "$GRM_PORT"

@@ -29,6 +29,10 @@ Environment variables:
 - `GRM_DB_PATH` (default: `$GRM_DATA_DIR/risk_monitor.sqlite`)
 - `GRM_CRON` weekly refresh schedule in 5-part cron (default: `0 7 * * MON`)
 - `GRM_SSL_VERIFY` TLS verify policy for HTTP fetchers (`1` default, `0` to disable, or path to CA bundle)
+- `GRM_HOST` bind host for server (default `127.0.0.1`; use `0.0.0.0` for external access)
+- `GRM_PORT` bind port (default `8000`)
+- `GRM_AUTH_USERNAME`, `GRM_AUTH_PASSWORD` enable login protection
+- `GRM_SESSION_SECRET` session signing key (set a strong random value in production)
 
 ## Dev / tests
 
@@ -91,3 +95,19 @@ Built-in plugin ideas:
 - `brent`: Brent crude shock trigger (`DCOILBRENTEU`)
 - `dram_price`: DRAM price proxy via semiconductor PPI (`PCU334413334413`, 30D/MoM-style)
 - `ai_memory`: AI memory demand proxy via Micron 14D move (`MU.US`)
+
+## Expose GRM over external IP safely
+
+1. Set server bind + login in `.env`:
+
+```bash
+GRM_HOST=0.0.0.0
+GRM_PORT=8000
+GRM_AUTH_USERNAME=admin
+GRM_AUTH_PASSWORD=change-this-strong-password
+GRM_SESSION_SECRET=change-this-long-random-string
+```
+
+2. Prefer reverse proxy + TLS (Nginx/Caddy) and restrict inbound firewall to only required ports.
+3. Do not expose without `GRM_AUTH_*` set.
+

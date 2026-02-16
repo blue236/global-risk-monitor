@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GRM Login</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <main class="grid" style="max-width:520px;margin:60px auto;">
+    <section class="card">
+      <h2>Global Risk Monitor Login</h2>
+      {% if not auth_enabled %}
+        <p class="hint">Authentication is disabled. Set <code>GRM_AUTH_USERNAME</code> and <code>GRM_AUTH_PASSWORD</code>.</p>
+      {% else %}
+        {% if error %}<p style="color:#b00020;">{{ error }}</p>{% endif %}
+        <form method="post" action="/login" class="grid" style="gap:12px;">
+          <div>
+            <label>Username</label>
+            <input type="text" name="username" required style="width:100%;padding:8px;" />
+          </div>
+          <div>
+            <label>Password</label>
+            <input type="password" name="password" required style="width:100%;padding:8px;" />
+          </div>
+          <button class="btn" type="submit">Sign in</button>
+        </form>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>

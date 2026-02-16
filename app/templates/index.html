@@ -17,6 +17,11 @@
       <form method="post" action="/refresh">
         <button class="btn" type="submit">Refresh now</button>
       </form>
+      {% if auth_enabled %}
+      <form method="post" action="/logout">
+        <button class="btn secondary" type="submit">Logout</button>
+      </form>
+      {% endif %}
       <div class="meta">
         <div><span class="k">Last refresh:</span> {{ last_refresh or "(never)" }}</div>
         {% if last_errors %}
