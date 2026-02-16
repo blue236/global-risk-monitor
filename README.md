@@ -33,6 +33,10 @@ Environment variables:
 - `GRM_PORT` bind port (default `8000`)
 - `GRM_AUTH_USERNAME`, `GRM_AUTH_PASSWORD` enable login protection
 - `GRM_SESSION_SECRET` session signing key (set a strong random value in production)
+- `GRM_COOKIE_SECURE` set `1` when serving behind HTTPS
+- `GRM_AUTH_MAX_ATTEMPTS` (default `5`) max login attempts per window
+- `GRM_AUTH_WINDOW_SECONDS` (default `300`) attempt window
+- `GRM_AUTH_BLOCK_SECONDS` (default `900`) temporary block duration
 
 ## Dev / tests
 
@@ -110,4 +114,20 @@ GRM_SESSION_SECRET=change-this-long-random-string
 
 2. Prefer reverse proxy + TLS (Nginx/Caddy) and restrict inbound firewall to only required ports.
 3. Do not expose without `GRM_AUTH_*` set.
+
+
+### Recommended hardening for external access
+
+- Put GRM behind HTTPS reverse proxy (Caddy/Nginx).
+- Set `GRM_COOKIE_SECURE=1` when HTTPS is enabled.
+- Restrict inbound firewall to only the proxy port(s) (typically 80/443).
+- Keep GRM itself bound to localhost when using a reverse proxy on same host.
+
+Example Caddyfile:
+
+```caddy
+your.domain.com {
+  reverse_proxy 127.0.0.1:8000
+}
+```
 

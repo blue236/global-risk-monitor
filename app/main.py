@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import os
+import time
 from pathlib import Path
 from typing import Dict, List
 
@@ -34,6 +35,10 @@ AUTH_USER = os.environ.get("GRM_AUTH_USERNAME", "").strip()
 AUTH_PASS = os.environ.get("GRM_AUTH_PASSWORD", "").strip()
 AUTH_ENABLED = bool(AUTH_USER and AUTH_PASS)
 SESSION_SECRET = os.environ.get("GRM_SESSION_SECRET", "change-me-grm-session-secret")
+COOKIE_SECURE = os.environ.get("GRM_COOKIE_SECURE", "0").strip() in {"1", "true", "TRUE", "yes", "on"}
+AUTH_MAX_ATTEMPTS = int(os.environ.get("GRM_AUTH_MAX_ATTEMPTS", "5") or "5")
+AUTH_WINDOW_SECONDS = int(os.environ.get("GRM_AUTH_WINDOW_SECONDS", "300") or "300")
+AUTH_BLOCK_SECONDS = int(os.environ.get("GRM_AUTH_BLOCK_SECONDS", "900") or "900")
 
 
 def _err_text(e: Exception) -> str:
@@ -57,9 +62,35 @@ app = FastAPI(title="Global Risk Monitor", version="0.1.0")
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 
 
+_login_attempts: dict[str, list[float]] = {}
+_login_blocked_until: dict[str, float] = {}
+
+
 def _auth_cookie_value() -> str:
     raw = f"{AUTH_USER}:{AUTH_PASS}:{SESSION_SECRET}".encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
+
+
+def _client_ip(request: Request) -> str:
+    xff = request.headers.get("x-forwarded-for", "").strip()
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _is_ip_blocked(ip: str) -> bool:
+    until = _login_blocked_until.get(ip, 0.0)
+    return until > time.time()
+
+
+def _register_login_failure(ip: str) -> None:
+    now = time.time()
+    arr = [t for t in _login_attempts.get(ip, []) if now - t <= AUTH_WINDOW_SECONDS]
+    arr.append(now)
+    _login_attempts[ip] = arr
+    if len(arr) >= AUTH_MAX_ATTEMPTS:
+        _login_blocked_until[ip] = now + AUTH_BLOCK_SECONDS
+        _login_attempts[ip] = []
 
 
 def _is_authenticated(request: Request) -> bool:
@@ -307,10 +338,23 @@ async def login_page(request: Request):
 async def login_submit(request: Request, username: str = Form(""), password: str = Form("")):
     if not AUTH_ENABLED:
         return RedirectResponse(url="/", status_code=303)
+
+    ip = _client_ip(request)
+    if _is_ip_blocked(ip):
+        return templates.TemplateResponse(
+            "login.html",
+            {"request": request, "auth_enabled": AUTH_ENABLED, "error": "Too many attempts. Please try again later."},
+            status_code=429,
+        )
+
     if username == AUTH_USER and password == AUTH_PASS:
+        _login_attempts.pop(ip, None)
+        _login_blocked_until.pop(ip, None)
         resp = RedirectResponse(url="/", status_code=303)
-        resp.set_cookie("grm_auth", _auth_cookie_value(), httponly=True, samesite="lax")
+        resp.set_cookie("grm_auth", _auth_cookie_value(), httponly=True, samesite="lax", secure=COOKIE_SECURE)
         return resp
+
+    _register_login_failure(ip)
     return templates.TemplateResponse("login.html", {"request": request, "auth_enabled": AUTH_ENABLED, "error": "Invalid credentials"}, status_code=401)
 
 
