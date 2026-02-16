@@ -18,6 +18,7 @@ class PluginDef:
     source: str
     series_id: str
     trigger_pct: float
+    lookback_days: int = 7
 
 
 PLUGIN_REGISTRY: Dict[str, PluginDef] = {
@@ -40,18 +41,20 @@ PLUGIN_REGISTRY: Dict[str, PluginDef] = {
     "dram_price": PluginDef(
         id="dram_price",
         name="DRAM price proxy (semiconductor PPI)",
-        description="Producer price trend for semiconductor industry (FRED: PCU334413334413)",
+        description="Producer price trend for semiconductor industry (FRED: PCU334413334413, MoM-style)",
         source="fred",
         series_id="PCU334413334413",
-        trigger_pct=3.0,
+        trigger_pct=2.0,
+        lookback_days=30,
     ),
     "ai_memory": PluginDef(
         id="ai_memory",
         name="AI memory demand proxy (Micron)",
-        description="Micron weekly move as AI memory demand proxy (Stooq: MU.US)",
+        description="Micron 2-week move as AI memory demand proxy (Stooq: MU.US)",
         source="stooq",
         series_id="MU",
-        trigger_pct=8.0,
+        trigger_pct=10.0,
+        lookback_days=14,
     ),
 }
 
@@ -95,6 +98,7 @@ def list_plugins(db) -> dict:
                 "source": p.source,
                 "series_id": p.series_id,
                 "trigger_pct": p.trigger_pct,
+                "lookback_days": p.lookback_days,
                 "enabled": p.id in enabled,
             }
             for p in PLUGIN_REGISTRY.values()
@@ -116,7 +120,7 @@ def compute_plugin_triggers(data: Dict[str, pd.DataFrame], enabled_ids: List[str
             continue
         last = df2.iloc[-1]
         last_date = pd.to_datetime(last["date"]).date()
-        target = last_date - dt.timedelta(days=7)
+        target = last_date - dt.timedelta(days=p.lookback_days)
         prior_df = df2[df2["date"].dt.date <= target]
         wow = float("nan")
         if not prior_df.empty:
@@ -138,7 +142,7 @@ def compute_plugin_triggers(data: Dict[str, pd.DataFrame], enabled_ids: List[str
                 "wow_change": float(wow) if pd.notna(wow) else float("nan"),
                 "wow_change_unit": "%",
                 "status": status,
-                "rationale": f"7D change {wow:.2f}% vs plugin threshold {p.trigger_pct:.2f}%",
+                "rationale": f"{p.lookback_days}D change {wow:.2f}% vs plugin threshold {p.trigger_pct:.2f}%",
             }
         )
     return out

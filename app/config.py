@@ -13,7 +13,7 @@ class TriggerConfig:
     qqq_pct: float = -5.0  # Nasdaq proxy weekly % change (<=)
     nvda_pct: float = -7.0
     msft_pct: float = -5.0
-    geopolitics_wow_pct: float = 50.0  # WoW increase in mention volume
+    geopolitics_wow_pct: float = 35.0  # WoW increase in mention volume
 
 
 FRED_SERIES = {

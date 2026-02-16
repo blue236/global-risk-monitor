@@ -89,5 +89,5 @@ Enable optional signals in UI (**Settings & Reports → Manage plugins**) or via
 Built-in plugin ideas:
 - `vix`: VIX volatility stress trigger (`VIXCLS`)
 - `brent`: Brent crude shock trigger (`DCOILBRENTEU`)
-- `dram_price`: DRAM price proxy via semiconductor PPI (`PCU334413334413`)
-- `ai_memory`: AI memory demand proxy via Micron weekly move (`MU.US`)
+- `dram_price`: DRAM price proxy via semiconductor PPI (`PCU334413334413`, 30D/MoM-style)
+- `ai_memory`: AI memory demand proxy via Micron 14D move (`MU.US`)
