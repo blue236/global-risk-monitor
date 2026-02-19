@@ -11,6 +11,7 @@ META_THRESHOLDS_KEY = "thresholds_json"
 META_LAST_ALERT_HASH = "last_alert_hash"
 META_LAST_ALERT_AT = "last_alert_at"
 META_LAST_REPORT_AT = "last_report_at"
+META_TELEGRAM_OFFSET = "telegram_offset"
 
 
 def default_thresholds() -> Dict[str, float]:
@@ -73,6 +74,20 @@ def set_last_report_at(db, iso_ts: str) -> None:
 
 def get_last_report_at(db) -> str | None:
     return db.get_meta(META_LAST_REPORT_AT)
+
+
+def get_telegram_offset(db) -> int | None:
+    s = db.get_meta(META_TELEGRAM_OFFSET)
+    if not s:
+        return None
+    try:
+        return int(s)
+    except Exception:
+        return None
+
+
+def set_telegram_offset(db, offset: int) -> None:
+    db.set_meta(META_TELEGRAM_OFFSET, str(int(offset)))
 
 
 def reset_thresholds(db) -> Dict[str, float]:

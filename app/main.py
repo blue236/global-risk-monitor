@@ -19,8 +19,18 @@ from .config import EQUITY_TICKERS, FRED_SERIES, GDELT_QUERY
 from .db import Database
 from .fetchers import fetch_fred_series, fetch_gdelt_daily_volume, fetch_stooq_daily_close
 from .plugins import PLUGIN_REGISTRY, compute_plugin_triggers, get_enabled_plugins, list_plugins, set_enabled_plugins
-from .settings import load_thresholds, save_thresholds, reset_thresholds, get_last_alert_hash, set_last_alert_hash, set_last_alert_at, set_last_report_at
-from .notifications import send_email, send_telegram
+from .settings import (
+    load_thresholds,
+    save_thresholds,
+    reset_thresholds,
+    get_last_alert_hash,
+    set_last_alert_hash,
+    set_last_alert_at,
+    set_last_report_at,
+    get_telegram_offset,
+    set_telegram_offset,
+)
+from .notifications import send_email, send_telegram, fetch_telegram_updates, telegram_chat_id
 from .reporting import generate_korean_report
 
 APP_NAME = "global-risk-monitor"
@@ -39,6 +49,7 @@ COOKIE_SECURE = os.environ.get("GRM_COOKIE_SECURE", "0").strip() in {"1", "true"
 AUTH_MAX_ATTEMPTS = int(os.environ.get("GRM_AUTH_MAX_ATTEMPTS", "5") or "5")
 AUTH_WINDOW_SECONDS = int(os.environ.get("GRM_AUTH_WINDOW_SECONDS", "300") or "300")
 AUTH_BLOCK_SECONDS = int(os.environ.get("GRM_AUTH_BLOCK_SECONDS", "900") or "900")
+TELEGRAM_COMMANDS_ENABLED = os.environ.get("GRM_TELEGRAM_COMMANDS", "1").strip() not in {"0", "false", "FALSE", "no", "off"}
 
 
 def _err_text(e: Exception) -> str:
@@ -327,6 +338,81 @@ async def _send_weekly_report() -> List[str]:
     set_last_report_at(db, now)
     return errors
 
+
+def _cmd_name(text: str) -> str:
+    first = (text or "").strip().split()[0].lower() if text else ""
+    return first.split("@")[0]
+
+
+def _status_message() -> str:
+    triggers = _compute_triggers_from_db()
+    n_alert = sum(1 for t in triggers if t.get("status") == "ALERT")
+    n_watch = sum(1 for t in triggers if t.get("status") == "WATCH")
+    n_ok = sum(1 for t in triggers if t.get("status") == "OK")
+    last_refresh = db.get_meta("last_refresh") or "(never)"
+    last_err = db.get_meta("last_refresh_errors") or "none"
+    return (
+        "[GRM] status\n"
+        f"- last_refresh: {last_refresh}\n"
+        f"- triggers: ALERT={n_alert}, WATCH={n_watch}, OK={n_ok}\n"
+        f"- last_errors: {last_err[:500]}"
+    )
+
+
+async def _process_telegram_commands() -> None:
+    if not TELEGRAM_COMMANDS_ENABLED:
+        return
+
+    allowed_chat = telegram_chat_id().strip()
+    if not allowed_chat:
+        return
+
+    offset = get_telegram_offset(db)
+    updates, err = fetch_telegram_updates(offset=offset, timeout=0)
+    if err:
+        return
+
+    new_offset = offset
+    for upd in updates:
+        try:
+            uid = int(upd.get("update_id", 0))
+            new_offset = max(new_offset or 0, uid + 1)
+            msg = upd.get("message") or {}
+            chat = str((msg.get("chat") or {}).get("id", "")).strip()
+            if chat != allowed_chat:
+                continue
+            text = str(msg.get("text") or "").strip()
+            cmd = _cmd_name(text)
+            if not cmd:
+                continue
+
+            if cmd == "/help":
+                send_telegram("[GRM] commands: /status, /refresh, /report, /triggers, /help")
+            elif cmd == "/status":
+                send_telegram(_status_message())
+            elif cmd == "/triggers":
+                triggers = _compute_triggers_from_db()
+                top = [t for t in triggers if t.get("status") in {"ALERT", "WATCH"}][:10]
+                if not top:
+                    send_telegram("[GRM] 현재 ALERT/WATCH 트리거가 없습니다.")
+                else:
+                    lines = ["[GRM] Active triggers"]
+                    for t in top:
+                        lines.append(f"- {t.get('status')} {t.get('name')}: {t.get('rationale')}")
+                    send_telegram("\n".join(lines)[:3500])
+            elif cmd == "/refresh":
+                send_telegram("[GRM] 수동 데이터 새로고침을 시작합니다...")
+                await refresh_all()
+                send_telegram("[GRM] 새로고침 완료. " + _status_message())
+            elif cmd == "/report":
+                payload = _build_report_payload(_compute_triggers_from_db())
+                send_telegram(payload.get("text", "[GRM] report unavailable")[:3500])
+        except Exception:
+            continue
+
+    if new_offset is not None:
+        set_telegram_offset(db, int(new_offset))
+
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
     if _is_authenticated(request):
@@ -477,11 +563,23 @@ async def on_startup():
             scheduler.add_job(lambda: __import__("asyncio").run(_send_weekly_report()), "cron", **rcron)
         except Exception:
             pass
+        # Telegram command polling (default on)
+        scheduler.add_job(lambda: __import__("asyncio").run(_process_telegram_commands()), "interval", seconds=5, id="telegram_commands", replace_existing=True)
     except Exception:
         # If cron misconfigured, skip scheduling (manual refresh still works)
         pass
 
     scheduler.start()
+
+    # Initialize Telegram update offset once to avoid replaying old commands.
+    if TELEGRAM_COMMANDS_ENABLED and get_telegram_offset(db) is None:
+        updates, _err = fetch_telegram_updates(offset=None, timeout=0)
+        if updates:
+            try:
+                last_uid = int(updates[-1].get("update_id", 0))
+                set_telegram_offset(db, last_uid + 1)
+            except Exception:
+                pass
 
     # If never refreshed, do a first refresh automatically (can be disabled)
     auto = os.environ.get("GRM_AUTO_REFRESH", "1")
