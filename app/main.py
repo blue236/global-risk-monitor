@@ -615,7 +615,7 @@ async def api_get_schedule():
 
 @app.put("/api/schedule")
 async def api_put_schedule(payload: Dict = Body(...)):
-    saved, errors = save_schedule_settings(db, payload if isinstance(payload, dict) else {})
+    _saved, errors = save_schedule_settings(db, payload if isinstance(payload, dict) else {})
     if errors:
         return JSONResponse({"ok": False, "errors": errors}, status_code=422)
 
@@ -627,10 +627,10 @@ async def api_put_schedule(payload: Dict = Body(...)):
 
     result = _current_schedule_settings()
     return {
-        "ok": apply_error is None,
+        "ok": True,
         "schedule": result,
         "applied": apply_error is None,
-        "message": "Saved and applied immediately." if apply_error is None else "Saved, but apply failed. Will apply on next restart.",
+        "message": "Saved and applied immediately." if apply_error is None else "Saved. Apply failed now, but settings will be used after restart.",
         "apply_error": apply_error,
     }
 

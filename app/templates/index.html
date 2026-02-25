@@ -205,20 +205,31 @@ async function saveSchedule(){
     timezone: document.getElementById('sch_timezone').value.trim(),
   };
 
-  const r = await fetch('/api/schedule', {
-    method:'PUT',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify(payload)
-  });
-  const j = await r.json();
+  let r, j;
+  try {
+    r = await fetch('/api/schedule', {
+      method:'PUT',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    j = await r.json();
+  } catch (e) {
+    msg.textContent = 'Save failed. Please retry.';
+    return;
+  }
 
-  if(!r.ok || !j.ok){
+  if (r.status === 422) {
     msg.textContent = 'Please fix the errors below.';
-    const errs = j.errors || {};
+    const errs = (j && j.errors) || {};
     Object.keys(errs).forEach(k => {
       const id = errMap[k];
       if(id) document.getElementById(id).textContent = errs[k];
     });
+    return;
+  }
+
+  if (!r.ok || !j || j.ok === false) {
+    msg.textContent = (j && (j.error || j.message)) || 'Save failed.';
     return;
   }
 
