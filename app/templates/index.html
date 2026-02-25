@@ -27,7 +27,7 @@
         {% if last_errors %}
         <div><span class="k">Last errors:</span> {{ last_errors }}</div>
         {% endif %}
-        <div><span class="k">Timezone:</span> Local</div>
+        <div><span class="k">Timezone:</span> {{ schedule.timezone }}</div>
       </div>
     </div>
   </header>
@@ -92,6 +92,32 @@
     </section>
 <section class="card">
   <h2>Settings & Reports</h2>
+
+  <h3>Scheduling</h3>
+  <div class="field">
+    <label><b>Data refresh schedule</b> <span class="hint">(GRM_CRON)</span></label>
+    <input id="sch_refresh" value="{{ schedule.refresh_cron }}" placeholder="0 7 * * *" />
+    <div class="hint">Example: daily 07:00 → <code>0 7 * * *</code></div>
+    <div class="error" id="err_refresh"></div>
+  </div>
+  <div class="field">
+    <label><b>Daily report schedule</b> <span class="hint">(GRM_REPORT_CRON)</span></label>
+    <input id="sch_report" value="{{ schedule.report_cron }}" placeholder="5 7 * * *" />
+    <div class="hint">Example: daily 07:05 → <code>5 7 * * *</code></div>
+    <div class="error" id="err_report"></div>
+  </div>
+  <div class="field">
+    <label><b>Timezone</b> <span class="hint">(GRM_TIMEZONE)</span></label>
+    <input id="sch_timezone" value="{{ schedule.timezone }}" placeholder="Europe/Berlin" />
+    <div class="hint">Use IANA timezone, e.g. <code>Europe/Berlin</code>, <code>Asia/Seoul</code>.</div>
+    <div class="error" id="err_timezone"></div>
+  </div>
+  <div class="row" style="margin-top:8px;">
+    <button class="btn" id="btnSaveSchedule">Save schedule</button>
+    <span class="hint" id="scheduleMsg"></span>
+  </div>
+
+  <hr/>
   <div class="row">
     <button class="btn secondary" id="btnThresholds">Edit thresholds</button>
     <button class="btn secondary" id="btnPlugins">Manage plugins</button>
@@ -165,6 +191,38 @@ function mkLineChart(canvasId, labels, data, yLabel) {
       }
     }
   });
+}
+
+async function saveSchedule(){
+  const msg = document.getElementById('scheduleMsg');
+  const errMap = { refresh_cron: 'err_refresh', report_cron: 'err_report', timezone: 'err_timezone' };
+  Object.values(errMap).forEach(id => document.getElementById(id).textContent = '');
+  msg.textContent = 'Saving...';
+
+  const payload = {
+    refresh_cron: document.getElementById('sch_refresh').value.trim(),
+    report_cron: document.getElementById('sch_report').value.trim(),
+    timezone: document.getElementById('sch_timezone').value.trim(),
+  };
+
+  const r = await fetch('/api/schedule', {
+    method:'PUT',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(payload)
+  });
+  const j = await r.json();
+
+  if(!r.ok || !j.ok){
+    msg.textContent = 'Please fix the errors below.';
+    const errs = j.errors || {};
+    Object.keys(errs).forEach(k => {
+      const id = errMap[k];
+      if(id) document.getElementById(id).textContent = errs[k];
+    });
+    return;
+  }
+
+  msg.textContent = j.message || 'Saved.';
 }
 
 const thresholdLabels = {
@@ -269,6 +327,8 @@ async function testNotify(){
   const j = await r.json();
   alert(j.ok ? 'Test notification sent (if configured).' : ('Failed: ' + (j.errors||[]).join(' | ')));
 }
+
+document.getElementById('btnSaveSchedule').addEventListener('click', saveSchedule);
 
 document.getElementById('btnThresholds').addEventListener('click', async () => {
   const th = await getThresholds();

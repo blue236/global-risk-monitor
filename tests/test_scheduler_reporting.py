@@ -8,9 +8,10 @@ from app import main
 
 
 def test_cron_defaults_are_daily():
-    assert main.SCHEDULE_CRON == "0 7 * * *"
-    assert main.REPORT_CRON == "5 7 * * *"
-    assert main.SCHEDULE_TIMEZONE == "Europe/Berlin"
+    s = main._current_schedule_settings()
+    assert s["refresh_cron"] == "0 7 * * *"
+    assert s["report_cron"] == "5 7 * * *"
+    assert s["timezone"] == "Europe/Berlin"
 
 
 def test_build_report_payload_includes_summary_and_operational_meta(tmp_path: Path, monkeypatch):

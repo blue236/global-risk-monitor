@@ -31,6 +31,11 @@ from .settings import (
     set_last_report_at,
     get_telegram_offset,
     set_telegram_offset,
+    get_schedule_settings,
+    save_schedule_settings,
+    DEFAULT_REFRESH_CRON,
+    DEFAULT_REPORT_CRON,
+    DEFAULT_TIMEZONE,
 )
 from .notifications import send_email, send_telegram, fetch_telegram_updates, telegram_chat_id
 from .reporting import generate_korean_report
@@ -40,9 +45,9 @@ APP_NAME = "global-risk-monitor"
 DATA_DIR = Path(os.environ.get("GRM_DATA_DIR", str(Path.home() / ".global-risk-monitor")))
 DB_PATH = Path(os.environ.get("GRM_DB_PATH", str(DATA_DIR / "risk_monitor.sqlite")))
 
-SCHEDULE_CRON = os.environ.get("GRM_CRON", "0 7 * * *")  # minute hour day month dow
-REPORT_CRON = os.environ.get("GRM_REPORT_CRON", "5 7 * * *")
-SCHEDULE_TIMEZONE = os.environ.get("GRM_TIMEZONE", "Europe/Berlin").strip() or "Europe/Berlin"
+ENV_SCHEDULE_CRON = os.environ.get("GRM_CRON", DEFAULT_REFRESH_CRON)  # minute hour day month dow
+ENV_REPORT_CRON = os.environ.get("GRM_REPORT_CRON", DEFAULT_REPORT_CRON)
+ENV_SCHEDULE_TIMEZONE = os.environ.get("GRM_TIMEZONE", DEFAULT_TIMEZONE).strip() or DEFAULT_TIMEZONE
 
 AUTH_USER = os.environ.get("GRM_AUTH_USERNAME", "").strip()
 AUTH_PASS = os.environ.get("GRM_AUTH_PASSWORD", "").strip()
@@ -77,6 +82,51 @@ def _trigger_summary(triggers: List[dict]) -> Dict[str, int]:
 
 
 db = Database(DB_PATH)
+
+
+def _current_schedule_settings() -> dict:
+    return get_schedule_settings(
+        db,
+        env_refresh=ENV_SCHEDULE_CRON,
+        env_report=ENV_REPORT_CRON,
+        env_timezone=ENV_SCHEDULE_TIMEZONE,
+    )
+
+
+def _apply_scheduler_settings() -> None:
+    global scheduler
+    cfg = _current_schedule_settings()
+    tz = ZoneInfo(cfg["timezone"])
+
+    if scheduler is None:
+        scheduler = BackgroundScheduler(timezone=tz)
+    elif hasattr(scheduler, "configure"):
+        scheduler.configure(timezone=tz)
+
+    refresh_kwargs = _parse_cron(cfg["refresh_cron"], "refresh_cron")
+    report_kwargs = _parse_cron(cfg["report_cron"], "report_cron")
+
+    scheduler.add_job(
+        _run_refresh_job,
+        "cron",
+        id="refresh_job",
+        replace_existing=True,
+        coalesce=True,
+        misfire_grace_time=1800,
+        max_instances=1,
+        **refresh_kwargs,
+    )
+    scheduler.add_job(
+        _run_report_job,
+        "cron",
+        id="report_job",
+        replace_existing=True,
+        coalesce=True,
+        misfire_grace_time=1800,
+        max_instances=1,
+        **report_kwargs,
+    )
+
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
@@ -324,7 +374,8 @@ def _build_report_payload(triggers: List[dict]) -> dict:
     # rebuild TriggerResult-like objects shape for reporting
     from .analytics import TriggerResult
 
-    tz = ZoneInfo(SCHEDULE_TIMEZONE)
+    tz_name = _current_schedule_settings()["timezone"]
+    tz = ZoneInfo(tz_name)
     now_local = dt.datetime.now(tz)
     objs = [TriggerResult(**t) for t in triggers]
     rep = generate_korean_report(objs, now=now_local.astimezone(dt.timezone.utc))
@@ -341,7 +392,7 @@ def _build_report_payload(triggers: List[dict]) -> dict:
 
     return {
         "generated_at": now_local.isoformat(timespec="seconds"),
-        "timezone": SCHEDULE_TIMEZONE,
+        "timezone": tz_name,
         "last_refresh": last_refresh,
         "last_errors": last_errors,
         "trigger_summary": counts,
@@ -357,7 +408,8 @@ def _build_report_payload(triggers: List[dict]) -> dict:
 
 
 async def _send_scheduled_report() -> List[str]:
-    now = dt.datetime.now(ZoneInfo(SCHEDULE_TIMEZONE)).isoformat(timespec="seconds")
+    tz_name = _current_schedule_settings()["timezone"]
+    now = dt.datetime.now(ZoneInfo(tz_name)).isoformat(timespec="seconds")
     triggers = _compute_triggers_from_db()
     payload = _build_report_payload(triggers)
     title = f"[GRM] 일일 리스크 리포트 ({now})"
@@ -514,6 +566,7 @@ async def index(request: Request):
             "last_refresh": last_refresh,
             "last_errors": last_errors,
             "auth_enabled": AUTH_ENABLED,
+            "schedule": _current_schedule_settings(),
         },
     )
 
@@ -549,11 +602,37 @@ async def api_put_thresholds(payload: Dict = Body(...)):
     return {"ok": True, "thresholds": merged}
 
 
-
 @app.post("/api/thresholds/reset")
 async def api_reset_thresholds():
     th = reset_thresholds(db)
     return {"ok": True, "thresholds": th}
+
+
+@app.get("/api/schedule")
+async def api_get_schedule():
+    return {"ok": True, "schedule": _current_schedule_settings()}
+
+
+@app.put("/api/schedule")
+async def api_put_schedule(payload: Dict = Body(...)):
+    saved, errors = save_schedule_settings(db, payload if isinstance(payload, dict) else {})
+    if errors:
+        return JSONResponse({"ok": False, "errors": errors}, status_code=422)
+
+    apply_error = None
+    try:
+        _apply_scheduler_settings()
+    except Exception as e:
+        apply_error = str(e)
+
+    result = _current_schedule_settings()
+    return {
+        "ok": apply_error is None,
+        "schedule": result,
+        "applied": apply_error is None,
+        "message": "Saved and applied immediately." if apply_error is None else "Saved, but apply failed. Will apply on next restart.",
+        "apply_error": apply_error,
+    }
 
 
 @app.get("/api/plugins")
@@ -601,45 +680,24 @@ scheduler: BackgroundScheduler | None = None
 @app.on_event("startup")
 async def on_startup():
     global scheduler
-    tz = ZoneInfo(SCHEDULE_TIMEZONE)
-    scheduler = BackgroundScheduler(timezone=tz)
+    scheduler = BackgroundScheduler(timezone=ZoneInfo(_current_schedule_settings()["timezone"]))
 
     try:
-        cron = _parse_cron(SCHEDULE_CRON, "GRM_CRON")
-        scheduler.add_job(
-            _run_refresh_job,
-            "cron",
-            id="refresh_job",
-            replace_existing=True,
-            coalesce=True,
-            misfire_grace_time=1800,
-            max_instances=1,
-            **cron,
-        )
-        rcron = _parse_cron(REPORT_CRON, "GRM_REPORT_CRON")
-        scheduler.add_job(
-            _run_report_job,
-            "cron",
-            id="report_job",
-            replace_existing=True,
-            coalesce=True,
-            misfire_grace_time=1800,
-            max_instances=1,
-            **rcron,
-        )
-        # Telegram command polling (default on)
-        scheduler.add_job(
-            _run_telegram_poll_job,
-            "interval",
-            seconds=5,
-            id="telegram_commands",
-            replace_existing=True,
-            coalesce=True,
-            max_instances=1,
-        )
+        _apply_scheduler_settings()
     except Exception:
-        # If cron misconfigured, skip scheduling (manual refresh still works)
+        # If schedule config is broken, skip cron scheduling (manual refresh/report still works).
         pass
+
+    # Telegram command polling (default on)
+    scheduler.add_job(
+        _run_telegram_poll_job,
+        "interval",
+        seconds=5,
+        id="telegram_commands",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
 
     scheduler.start()
 
