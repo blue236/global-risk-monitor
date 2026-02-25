@@ -27,7 +27,9 @@ Open: http://127.0.0.1:8000
 Environment variables:
 - `GRM_DATA_DIR` (default: `~/.global-risk-monitor`)
 - `GRM_DB_PATH` (default: `$GRM_DATA_DIR/risk_monitor.sqlite`)
-- `GRM_CRON` weekly refresh schedule in 5-part cron (default: `0 7 * * MON`)
+- `GRM_CRON` refresh schedule in 5-part cron (default: `0 7 * * *`, daily 07:00)
+- `GRM_REPORT_CRON` report schedule in 5-part cron (default: `5 7 * * *`, daily 07:05)
+- `GRM_TIMEZONE` scheduler timezone (default: `Europe/Berlin`)
 - `GRM_SSL_VERIFY` TLS verify policy for HTTP fetchers (`1` default, `0` to disable, or path to CA bundle)
 - `GRM_HOST` bind host for server (default `127.0.0.1`; use `0.0.0.0` for external access)
 - `GRM_PORT` bind port (default `8000`)
@@ -80,13 +82,14 @@ or via API: `POST /api/notify/test`.
 Open “Edit thresholds” to change weekly trigger thresholds (saved in the local SQLite DB).
 Reset to defaults via the UI or API: `POST /api/thresholds/reset`.
 
-## Weekly Korean report
+## Daily Korean report
 
 Generate on-demand: `GET /api/report` (returns markdown + plain text).
-A scheduled weekly report is also sent via Telegram/Email when configured.
+GRM itself sends scheduled daily report via Telegram/Email using internal function calls (not self-HTTP), so web auth does not block scheduled jobs.
 
-- Refresh schedule: `GRM_CRON` (default: `0 7 * * MON`)
-- Report schedule: `GRM_REPORT_CRON` (default: `5 7 * * MON`)
+- Refresh schedule: `GRM_CRON` (default: `0 7 * * *`)
+- Report schedule: `GRM_REPORT_CRON` (default: `5 7 * * *`)
+- Timezone: `GRM_TIMEZONE` (default: `Europe/Berlin`)
 ## Plugin extensions (optional)
 
 Enable optional signals in UI (**Settings & Reports → Manage plugins**) or via API:

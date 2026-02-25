@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import hashlib
 import os
 import time
 from pathlib import Path
 from typing import Dict, List
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -38,8 +40,9 @@ APP_NAME = "global-risk-monitor"
 DATA_DIR = Path(os.environ.get("GRM_DATA_DIR", str(Path.home() / ".global-risk-monitor")))
 DB_PATH = Path(os.environ.get("GRM_DB_PATH", str(DATA_DIR / "risk_monitor.sqlite")))
 
-SCHEDULE_CRON = os.environ.get("GRM_CRON", "0 7 * * MON")  # minute hour day month dow
-REPORT_CRON = os.environ.get("GRM_REPORT_CRON", "5 7 * * MON")
+SCHEDULE_CRON = os.environ.get("GRM_CRON", "0 7 * * *")  # minute hour day month dow
+REPORT_CRON = os.environ.get("GRM_REPORT_CRON", "5 7 * * *")
+SCHEDULE_TIMEZONE = os.environ.get("GRM_TIMEZONE", "Europe/Berlin").strip() or "Europe/Berlin"
 
 AUTH_USER = os.environ.get("GRM_AUTH_USERNAME", "").strip()
 AUTH_PASS = os.environ.get("GRM_AUTH_PASSWORD", "").strip()
@@ -57,12 +60,20 @@ def _err_text(e: Exception) -> str:
     return s if s else e.__class__.__name__
 
 
-def _parse_cron(expr: str):
+def _parse_cron(expr: str, env_name: str = "GRM_CRON"):
     parts = expr.strip().split()
     if len(parts) != 5:
-        raise ValueError("GRM_CRON must be 5-part cron: 'm h dom mon dow'")
+        raise ValueError(f"{env_name} must be 5-part cron: 'm h dom mon dow'")
     m, h, dom, mon, dow = parts
     return dict(minute=m, hour=h, day=dom, month=mon, day_of_week=dow)
+
+
+def _trigger_summary(triggers: List[dict]) -> Dict[str, int]:
+    return {
+        "ALERT": sum(1 for t in triggers if t.get("status") == "ALERT"),
+        "WATCH": sum(1 for t in triggers if t.get("status") == "WATCH"),
+        "OK": sum(1 for t in triggers if t.get("status") == "OK"),
+    }
 
 
 db = Database(DB_PATH)
@@ -312,19 +323,44 @@ async def _notify_if_needed(triggers: List[dict]) -> List[str]:
 def _build_report_payload(triggers: List[dict]) -> dict:
     # rebuild TriggerResult-like objects shape for reporting
     from .analytics import TriggerResult
-    import datetime as _dt
 
+    tz = ZoneInfo(SCHEDULE_TIMEZONE)
+    now_local = dt.datetime.now(tz)
     objs = [TriggerResult(**t) for t in triggers]
-    rep = generate_korean_report(objs, now=_dt.datetime.now(_dt.timezone.utc))
-    return {"generated_at": _dt.datetime.now().isoformat(timespec="seconds"), **rep}
+    rep = generate_korean_report(objs, now=now_local.astimezone(dt.timezone.utc))
+
+    counts = _trigger_summary(triggers)
+    last_refresh = db.get_meta("last_refresh") or "(never)"
+    last_errors = db.get_meta("last_refresh_errors") or "none"
+    ops_block = (
+        "\n\n운영 상태\n"
+        f"- 최근 새로고침: {last_refresh}\n"
+        f"- 트리거 집계: ALERT {counts['ALERT']} / WATCH {counts['WATCH']} / OK {counts['OK']}\n"
+        f"- 최근 오류: {last_errors[:600]}"
+    )
+
+    return {
+        "generated_at": now_local.isoformat(timespec="seconds"),
+        "timezone": SCHEDULE_TIMEZONE,
+        "last_refresh": last_refresh,
+        "last_errors": last_errors,
+        "trigger_summary": counts,
+        **rep,
+        "text": f"{rep.get('text', '')}{ops_block}",
+        "markdown": (
+            f"{rep.get('markdown', '')}\n\n### 운영 상태\n"
+            f"- 최근 새로고침: {last_refresh}\n"
+            f"- 트리거 집계: ALERT {counts['ALERT']} / WATCH {counts['WATCH']} / OK {counts['OK']}\n"
+            f"- 최근 오류: {last_errors[:600]}"
+        ),
+    }
 
 
-async def _send_weekly_report() -> List[str]:
-    import datetime as _dt
-    now = _dt.datetime.now().isoformat(timespec="seconds")
+async def _send_scheduled_report() -> List[str]:
+    now = dt.datetime.now(ZoneInfo(SCHEDULE_TIMEZONE)).isoformat(timespec="seconds")
     triggers = _compute_triggers_from_db()
     payload = _build_report_payload(triggers)
-    title = f"[GRM] 주간 리스크 리포트 ({now})"
+    title = f"[GRM] 일일 리스크 리포트 ({now})"
     body = payload.get("text") if isinstance(payload, dict) else str(payload)
 
     errors: List[str] = []
@@ -337,6 +373,18 @@ async def _send_weekly_report() -> List[str]:
 
     set_last_report_at(db, now)
     return errors
+
+
+def _run_refresh_job() -> None:
+    asyncio.run(refresh_all())
+
+
+def _run_report_job() -> None:
+    asyncio.run(_send_scheduled_report())
+
+
+def _run_telegram_poll_job() -> None:
+    asyncio.run(_process_telegram_commands())
 
 
 def _cmd_name(text: str) -> str:
@@ -553,18 +601,42 @@ scheduler: BackgroundScheduler | None = None
 @app.on_event("startup")
 async def on_startup():
     global scheduler
-    scheduler = BackgroundScheduler()
+    tz = ZoneInfo(SCHEDULE_TIMEZONE)
+    scheduler = BackgroundScheduler(timezone=tz)
 
     try:
-        cron = _parse_cron(SCHEDULE_CRON)
-        scheduler.add_job(lambda: __import__("asyncio").run(refresh_all()), "cron", **cron)
-        try:
-            rcron = _parse_cron(REPORT_CRON)
-            scheduler.add_job(lambda: __import__("asyncio").run(_send_weekly_report()), "cron", **rcron)
-        except Exception:
-            pass
+        cron = _parse_cron(SCHEDULE_CRON, "GRM_CRON")
+        scheduler.add_job(
+            _run_refresh_job,
+            "cron",
+            id="refresh_job",
+            replace_existing=True,
+            coalesce=True,
+            misfire_grace_time=1800,
+            max_instances=1,
+            **cron,
+        )
+        rcron = _parse_cron(REPORT_CRON, "GRM_REPORT_CRON")
+        scheduler.add_job(
+            _run_report_job,
+            "cron",
+            id="report_job",
+            replace_existing=True,
+            coalesce=True,
+            misfire_grace_time=1800,
+            max_instances=1,
+            **rcron,
+        )
         # Telegram command polling (default on)
-        scheduler.add_job(lambda: __import__("asyncio").run(_process_telegram_commands()), "interval", seconds=5, id="telegram_commands", replace_existing=True)
+        scheduler.add_job(
+            _run_telegram_poll_job,
+            "interval",
+            seconds=5,
+            id="telegram_commands",
+            replace_existing=True,
+            coalesce=True,
+            max_instances=1,
+        )
     except Exception:
         # If cron misconfigured, skip scheduling (manual refresh still works)
         pass
