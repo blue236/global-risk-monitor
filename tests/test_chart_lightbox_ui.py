@@ -19,9 +19,10 @@ def test_index_template_has_chart_lightbox_for_all_cards():
     assert 'id="chart_lightbox_canvas"' in html
     assert html.count('class="card chart-card"') >= 5
 
-    # User-called-out charts should be supported explicitly.
+    # User-called-out charts should be supported explicitly and ordered.
     assert 'data-chart-canvas="chart_hy"' in html
     assert 'data-chart-canvas="chart_qqq"' in html
+    assert html.index('data-chart-canvas="chart_dxy"') < html.index('data-chart-canvas="chart_hy"') < html.index('data-chart-canvas="chart_qqq"')
 
     # Accessibility and close interactions in JS.
     assert "setAttribute('tabindex', '0')" in html

@@ -91,12 +91,12 @@ hr{ border:0; border-top:1px solid #d0d7de; margin:14px 0; }
 .chart-card{cursor:zoom-in;transition:border-color .2s ease, transform .2s ease}
 .chart-card:hover,.chart-card:focus-within{border-color:#3b82f6;transform:translateY(-1px)}
 .chart-hint{margin-top:8px}
-.chart-modal-card{background:var(--card);color:var(--text);width:min(1100px,96vw);height:min(86vh,760px);display:flex;flex-direction:column}
-.chart-lightbox-canvas-wrap{position:relative;flex:1;min-height:420px}
+.chart-modal-card{background:var(--card);color:var(--text);width:min(1600px,98vw);height:min(94vh,1040px);display:flex;flex-direction:column}
+.chart-lightbox-canvas-wrap{position:relative;flex:1;min-height:720px}
 .chart-lightbox-canvas-wrap canvas{width:100% !important;height:100% !important}
 
 @media (max-width: 700px){
   .grid{ grid-template-columns: 1fr; }
-  .chart-modal-card{height:min(90vh,640px)}
-  .chart-lightbox-canvas-wrap{min-height:320px}
+  .chart-modal-card{width:min(98vw,98vw);height:min(92vh,760px)}
+  .chart-lightbox-canvas-wrap{min-height:420px}
 }
