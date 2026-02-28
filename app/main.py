@@ -4,6 +4,7 @@ import asyncio
 import datetime as dt
 import hashlib
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Dict, List
@@ -199,7 +200,7 @@ async def refresh_all() -> None:
     # FRED
     for sid in FRED_SERIES.keys():
         try:
-            df = await fetch_fred_series(sid, start=start)
+            df = fetch_fred_series(sid, start=start)
             rows = [(d.date().isoformat(), float(v)) for d, v in zip(df["date"], df["value"], strict=False)]
             db.upsert_observations(sid, rows)
         except Exception as e:
@@ -208,7 +209,7 @@ async def refresh_all() -> None:
     # Equities via Stooq
     for t in EQUITY_TICKERS.keys():
         try:
-            df = await fetch_stooq_daily_close(t, start=start)
+            df = fetch_stooq_daily_close(t, start=start)
             rows = [(d.date().isoformat(), float(v)) for d, v in zip(df["date"], df["close"], strict=False)]
             db.upsert_observations(t, rows)
         except Exception as e:
@@ -221,11 +222,11 @@ async def refresh_all() -> None:
             continue
         try:
             if p.source == "fred":
-                df = await fetch_fred_series(p.series_id, start=start)
+                df = fetch_fred_series(p.series_id, start=start)
                 rows = [(d.date().isoformat(), float(v)) for d, v in zip(df["date"], df["value"], strict=False)]
                 db.upsert_observations(p.series_id, rows)
             elif p.source == "stooq":
-                df = await fetch_stooq_daily_close(p.series_id, start=start)
+                df = fetch_stooq_daily_close(p.series_id, start=start)
                 rows = [(d.date().isoformat(), float(v)) for d, v in zip(df["date"], df["close"], strict=False)]
                 db.upsert_observations(p.series_id, rows)
         except Exception as e:
@@ -235,7 +236,7 @@ async def refresh_all() -> None:
     g_start = dt.date.today() - dt.timedelta(days=30)
     g_end = dt.date.today()
     try:
-        gdf = await fetch_gdelt_daily_volume(GDELT_QUERY, start=g_start, end=g_end)
+        gdf = fetch_gdelt_daily_volume(GDELT_QUERY, start=g_start, end=g_end)
         if not gdf.empty:
             rows = [(d.date().isoformat(), float(v)) for d, v in zip(gdf["date"], gdf["volume"], strict=False)]
             db.upsert_observations("GDELT", rows)
@@ -490,8 +491,39 @@ async def _send_scheduled_report() -> List[str]:
     return errors
 
 
+_REFRESH_LOCK = threading.Lock()
+_REFRESH_IN_PROGRESS = False
+
+
+def _start_refresh_background(*, notify_telegram: bool = False) -> bool:
+    global _REFRESH_IN_PROGRESS
+    with _REFRESH_LOCK:
+        if _REFRESH_IN_PROGRESS:
+            return False
+        _REFRESH_IN_PROGRESS = True
+
+    def _runner() -> None:
+        global _REFRESH_IN_PROGRESS
+        try:
+            asyncio.run(refresh_all())
+            if notify_telegram:
+                send_telegram("[GRM] Refresh complete. " + _status_message())
+        except Exception as e:
+            prev = db.get_meta("last_refresh_errors") or ""
+            joined = " | ".join([prev, f"REFRESH:{e}"]) if prev else f"REFRESH:{e}"
+            db.set_meta("last_refresh_errors", joined[:2000])
+            if notify_telegram:
+                send_telegram(f"[GRM] Refresh failed: {e}")
+        finally:
+            with _REFRESH_LOCK:
+                _REFRESH_IN_PROGRESS = False
+
+    threading.Thread(target=_runner, name="grm-refresh", daemon=True).start()
+    return True
+
+
 def _run_refresh_job() -> None:
-    asyncio.run(refresh_all())
+    _start_refresh_background(notify_telegram=False)
 
 
 def _run_report_job() -> None:
@@ -499,7 +531,7 @@ def _run_report_job() -> None:
 
 
 def _run_telegram_poll_job() -> None:
-    asyncio.run(_process_telegram_commands())
+    _process_telegram_commands()
 
 
 def _cmd_name(text: str) -> str:
@@ -522,7 +554,7 @@ def _status_message() -> str:
     )
 
 
-async def _process_telegram_commands() -> None:
+def _process_telegram_commands() -> None:
     if not TELEGRAM_COMMANDS_ENABLED:
         return
 
@@ -539,7 +571,9 @@ async def _process_telegram_commands() -> None:
     for upd in updates:
         try:
             uid = int(upd.get("update_id", 0))
-            new_offset = max(new_offset or 0, uid + 1)
+            next_offset = uid + 1
+            new_offset = max(new_offset or 0, next_offset)
+            set_telegram_offset(db, int(next_offset))
             msg = upd.get("message") or {}
             chat = str((msg.get("chat") or {}).get("id", "")).strip()
             if chat != allowed_chat:
@@ -564,9 +598,10 @@ async def _process_telegram_commands() -> None:
                         lines.append(f"- {t.get('status')} {t.get('name')}: {t.get('rationale')}")
                     send_telegram("\n".join(lines)[:3500])
             elif cmd == "/refresh":
-                send_telegram("[GRM] Starting manual data refresh...")
-                await refresh_all()
-                send_telegram("[GRM] Refresh complete. " + _status_message())
+                if _start_refresh_background(notify_telegram=True):
+                    send_telegram("[GRM] Starting manual data refresh...")
+                else:
+                    send_telegram("[GRM] Refresh is already in progress. Please wait.")
             elif cmd == "/report":
                 payload = _build_report_payload(_compute_triggers_from_db())
                 send_telegram(payload.get("text", "[GRM] report unavailable")[:3500])
@@ -636,7 +671,7 @@ async def index(request: Request):
 
 @app.post("/refresh")
 async def refresh():
-    await refresh_all()
+    _start_refresh_background(notify_telegram=False)
     return RedirectResponse(url="/", status_code=303)
 
 
