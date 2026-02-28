@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-python3 -m venv .venv
+# Reuse existing virtualenv if present. Creating a new venv on every run can
+# fail on systems where the active `python3` runtime is missing stdlib modules
+# (e.g. `_posixsubprocess`) and is unnecessary for normal startup.
+if [ ! -x .venv/bin/python ]; then
+  python3 -m venv .venv
+fi
+
 source .venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 
 if [ -f .env ]; then
   set -a
