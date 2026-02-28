@@ -51,6 +51,11 @@ pytest -q
 uvicorn app.main:app --reload
 ```
 
+### Chart enlarge UX validation (PR #2 follow-up)
+- Click any chart card (including **High Yield OAS** and **Nasdaq proxy/QQQ**) to open an enlarged modal chart.
+- Verify modal close actions all work: **X button**, **ESC key**, and **outside-click**.
+- In enlarged mode, confirm legend + threshold overlay lines remain visible/readable.
+
 ## Notes
 - Uses public endpoints (no API keys): FRED `fredgraph.csv`, Stooq daily CSV, and GDELT timeline.
 - If any upstream source changes format, refresh may fail; you can still run manual refresh and inspect logs.

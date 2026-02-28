@@ -66,29 +66,34 @@
       <p class="hint">Tip: Use the API at <code>/api/series/&lt;SERIES_ID&gt;</code> (e.g., DGS10) for raw data.</p>
     </section>
 
-    <section class="card">
+    <section class="card chart-card" data-chart-canvas="chart_dgs10" data-chart-title="US 10Y yield (DGS10)">
       <h2>US 10Y yield (DGS10)</h2>
       <canvas id="chart_dgs10"></canvas>
+      <p class="hint chart-hint">Click chart to enlarge</p>
     </section>
 
-    <section class="card">
+    <section class="card chart-card" data-chart-canvas="chart_hy" data-chart-title="High Yield OAS (BAMLH0A0HYM2)">
       <h2>High Yield OAS (BAMLH0A0HYM2)</h2>
       <canvas id="chart_hy"></canvas>
+      <p class="hint chart-hint">Click chart to enlarge</p>
     </section>
 
-    <section class="card">
+    <section class="card chart-card" data-chart-canvas="chart_dxy" data-chart-title="USD broad index (DTWEXBGS)">
       <h2>USD broad index (DTWEXBGS)</h2>
       <canvas id="chart_dxy"></canvas>
+      <p class="hint chart-hint">Click chart to enlarge</p>
     </section>
 
-    <section class="card">
+    <section class="card chart-card" data-chart-canvas="chart_qqq" data-chart-title="Nasdaq proxy (QQQ)">
       <h2>Nasdaq proxy (QQQ)</h2>
       <canvas id="chart_qqq"></canvas>
+      <p class="hint chart-hint">Click chart to enlarge</p>
     </section>
 
-    <section class="card">
+    <section class="card chart-card" data-chart-canvas="chart_gdelt" data-chart-title="Geopolitics volume (GDELT)">
       <h2>Geopolitics volume (GDELT)</h2>
       <canvas id="chart_gdelt"></canvas>
+      <p class="hint chart-hint">Click chart to enlarge</p>
     </section>
 <section class="card">
   <h2>Settings & Reports</h2>
@@ -159,6 +164,18 @@
     <div class="hint" id="pluginMsg"></div>
   </div>
 </div>
+
+<div class="modal" id="chartLightbox" style="display:none;">
+  <div class="modal-card chart-modal-card">
+    <div class="modal-head">
+      <h3 id="chartLightboxTitle">Chart</h3>
+      <button class="btn small" id="btnCloseChartLightbox" aria-label="Close enlarged chart">✕</button>
+    </div>
+    <div class="chart-lightbox-canvas-wrap">
+      <canvas id="chart_lightbox_canvas"></canvas>
+    </div>
+  </div>
+</div>
   </main>
 
 <script>
@@ -168,14 +185,19 @@ async function fetchSeries(id) {
   return await r.json();
 }
 
-function mkLineChart(canvasId, labels, data, yLabel, thresholds = []) {
+const chartPayloads = {};
+let lightboxChart = null;
+
+function mkLineChart(canvasId, labels, data, yLabel, thresholds = [], options = {}) {
   const ctx = document.getElementById(canvasId);
+  if (!ctx) return null;
+
   const datasets = [{
     label: yLabel,
     data,
     tension: 0.2,
     pointRadius: 0,
-    borderWidth: 2,
+    borderWidth: options.mainLineWidth || 2,
     borderColor: '#60a5fa',
   }];
 
@@ -192,21 +214,93 @@ function mkLineChart(canvasId, labels, data, yLabel, thresholds = []) {
     });
   });
 
-  new Chart(ctx, {
+  return new Chart(ctx, {
     type: 'line',
     data: { labels, datasets },
     options: {
       responsive: true,
+      maintainAspectRatio: options.maintainAspectRatio ?? true,
+      interaction: { mode: 'nearest', intersect: false },
       plugins: {
         legend: {
           display: true,
-          labels: { boxWidth: 12, boxHeight: 2, usePointStyle: false }
+          labels: {
+            boxWidth: options.legendBoxWidth || 12,
+            boxHeight: options.legendBoxHeight || 2,
+            usePointStyle: false,
+            font: options.legendFont || {}
+          }
         }
       },
       scales: {
-        x: { ticks: { maxTicksLimit: 8 } },
-        y: { ticks: { maxTicksLimit: 6 } }
+        x: { ticks: { maxTicksLimit: options.maxXTicks || 8, font: options.axisFont || {} } },
+        y: { ticks: { maxTicksLimit: options.maxYTicks || 6, font: options.axisFont || {} } }
       }
+    }
+  });
+}
+
+function openChartLightbox(card) {
+  const canvasId = card?.dataset?.chartCanvas;
+  const title = card?.dataset?.chartTitle || 'Chart';
+  const payload = chartPayloads[canvasId];
+  if (!payload) return;
+
+  document.getElementById('chartLightboxTitle').textContent = title;
+  document.getElementById('chartLightbox').style.display = 'flex';
+
+  if (lightboxChart) {
+    lightboxChart.destroy();
+    lightboxChart = null;
+  }
+
+  lightboxChart = mkLineChart(
+    'chart_lightbox_canvas',
+    payload.labels,
+    payload.values,
+    payload.yLabel,
+    payload.thresholds,
+    {
+      maintainAspectRatio: false,
+      mainLineWidth: 2.5,
+      maxXTicks: 14,
+      maxYTicks: 10,
+      legendBoxWidth: 18,
+      legendBoxHeight: 3,
+      legendFont: { size: 12 },
+      axisFont: { size: 12 }
+    }
+  );
+}
+
+function closeChartLightbox() {
+  document.getElementById('chartLightbox').style.display = 'none';
+  if (lightboxChart) {
+    lightboxChart.destroy();
+    lightboxChart = null;
+  }
+}
+
+function initChartLightbox() {
+  document.querySelectorAll('.chart-card').forEach((card) => {
+    card.addEventListener('click', () => openChartLightbox(card));
+    card.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openChartLightbox(card);
+      }
+    });
+    card.setAttribute('role', 'button');
+    card.setAttribute('tabindex', '0');
+  });
+
+  document.getElementById('btnCloseChartLightbox').addEventListener('click', closeChartLightbox);
+  document.getElementById('chartLightbox').addEventListener('click', (e) => {
+    if (e.target.id === 'chartLightbox') closeChartLightbox();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && document.getElementById('chartLightbox').style.display !== 'none') {
+      closeChartLightbox();
     }
   });
 }
@@ -390,20 +484,26 @@ document.getElementById('pluginModal').addEventListener('click', (e) => { if(e.t
 (async () => {
   try {
     const dgs10 = await fetchSeries('DGS10');
+    chartPayloads.chart_dgs10 = { labels: dgs10.labels, values: dgs10.values, yLabel: 'Yield (%)', thresholds: dgs10.thresholds };
     mkLineChart('chart_dgs10', dgs10.labels, dgs10.values, 'Yield (%)', dgs10.thresholds);
 
     const hy = await fetchSeries('BAMLH0A0HYM2');
+    chartPayloads.chart_hy = { labels: hy.labels, values: hy.values, yLabel: 'Spread (%)', thresholds: hy.thresholds };
     mkLineChart('chart_hy', hy.labels, hy.values, 'Spread (%)', hy.thresholds);
 
     const dxy = await fetchSeries('DTWEXBGS');
+    chartPayloads.chart_dxy = { labels: dxy.labels, values: dxy.values, yLabel: 'Index', thresholds: dxy.thresholds };
     mkLineChart('chart_dxy', dxy.labels, dxy.values, 'Index', dxy.thresholds);
 
     const qqq = await fetchSeries('QQQ');
+    chartPayloads.chart_qqq = { labels: qqq.labels, values: qqq.values, yLabel: 'Close', thresholds: qqq.thresholds };
     mkLineChart('chart_qqq', qqq.labels, qqq.values, 'Close', qqq.thresholds);
 
     const gdelt = await fetchSeries('GDELT');
+    chartPayloads.chart_gdelt = { labels: gdelt.labels, values: gdelt.values, yLabel: 'Mentions', thresholds: gdelt.thresholds };
     mkLineChart('chart_gdelt', gdelt.labels, gdelt.values, 'Mentions', gdelt.thresholds);
 
+    initChartLightbox();
   } catch (e) {
     console.error(e);
   }
