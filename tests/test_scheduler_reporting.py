@@ -29,7 +29,7 @@ def test_build_report_payload_includes_summary_and_operational_meta(tmp_path: Pa
             "latest_value": 4.5,
             "wow_change": 45.0,
             "wow_change_unit": "bp",
-            "rationale": "급등",
+            "rationale": "spike",
         },
         {
             "key": "QQQ",
@@ -39,7 +39,7 @@ def test_build_report_payload_includes_summary_and_operational_meta(tmp_path: Pa
             "latest_value": 490.0,
             "wow_change": -4.2,
             "wow_change_unit": "%",
-            "rationale": "약세",
+            "rationale": "weakness",
         },
     ]
 
@@ -48,8 +48,8 @@ def test_build_report_payload_includes_summary_and_operational_meta(tmp_path: Pa
     assert payload["trigger_summary"] == {"ALERT": 1, "WATCH": 1, "OK": 0}
     assert payload["last_refresh"] == "2026-02-25T07:00:00"
     assert payload["last_errors"] == "none"
-    assert "운영 상태" in payload["text"]
-    assert "최근 새로고침" in payload["markdown"]
+    assert "Operational status" in payload["text"]
+    assert "Last refresh" in payload["markdown"]
 
 
 def test_internal_scheduled_report_not_blocked_by_api_auth(monkeypatch):
