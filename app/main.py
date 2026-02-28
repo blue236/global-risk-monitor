@@ -413,7 +413,7 @@ async def _notify_if_needed(triggers: List[dict]) -> List[str]:
     if last == h:
         return []
 
-    title = f"[GRM] ALERT {len(alerts)}개 발생 ({now})"
+    title = f"[GRM] {len(alerts)} ALERT triggers ({now})"
     body_lines = [title, ""]
     for a in alerts:
         body_lines.append(f"- {a.get('name')}: WoW {a.get('wow_change'):+.2f}{a.get('wow_change_unit')} ({a.get('rationale')})")
@@ -447,10 +447,10 @@ def _build_report_payload(triggers: List[dict]) -> dict:
     last_refresh = db.get_meta("last_refresh") or "(never)"
     last_errors = db.get_meta("last_refresh_errors") or "none"
     ops_block = (
-        "\n\n운영 상태\n"
-        f"- 최근 새로고침: {last_refresh}\n"
-        f"- 트리거 집계: ALERT {counts['ALERT']} / WATCH {counts['WATCH']} / OK {counts['OK']}\n"
-        f"- 최근 오류: {last_errors[:600]}"
+        "\n\nOperational status\n"
+        f"- Last refresh: {last_refresh}\n"
+        f"- Trigger summary: ALERT {counts['ALERT']} / WATCH {counts['WATCH']} / OK {counts['OK']}\n"
+        f"- Recent errors: {last_errors[:600]}"
     )
 
     return {
@@ -462,10 +462,10 @@ def _build_report_payload(triggers: List[dict]) -> dict:
         **rep,
         "text": f"{rep.get('text', '')}{ops_block}",
         "markdown": (
-            f"{rep.get('markdown', '')}\n\n### 운영 상태\n"
-            f"- 최근 새로고침: {last_refresh}\n"
-            f"- 트리거 집계: ALERT {counts['ALERT']} / WATCH {counts['WATCH']} / OK {counts['OK']}\n"
-            f"- 최근 오류: {last_errors[:600]}"
+            f"{rep.get('markdown', '')}\n\n### Operational status\n"
+            f"- Last refresh: {last_refresh}\n"
+            f"- Trigger summary: ALERT {counts['ALERT']} / WATCH {counts['WATCH']} / OK {counts['OK']}\n"
+            f"- Recent errors: {last_errors[:600]}"
         ),
     }
 
@@ -475,7 +475,7 @@ async def _send_scheduled_report() -> List[str]:
     now = dt.datetime.now(ZoneInfo(tz_name)).isoformat(timespec="seconds")
     triggers = _compute_triggers_from_db()
     payload = _build_report_payload(triggers)
-    title = f"[GRM] 일일 리스크 리포트 ({now})"
+    title = f"[GRM] Daily risk report ({now})"
     body = payload.get("text") if isinstance(payload, dict) else str(payload)
 
     errors: List[str] = []
@@ -557,16 +557,16 @@ async def _process_telegram_commands() -> None:
                 triggers = _compute_triggers_from_db()
                 top = [t for t in triggers if t.get("status") in {"ALERT", "WATCH"}][:10]
                 if not top:
-                    send_telegram("[GRM] 현재 ALERT/WATCH 트리거가 없습니다.")
+                    send_telegram("[GRM] There are no active ALERT/WATCH triggers.")
                 else:
                     lines = ["[GRM] Active triggers"]
                     for t in top:
                         lines.append(f"- {t.get('status')} {t.get('name')}: {t.get('rationale')}")
                     send_telegram("\n".join(lines)[:3500])
             elif cmd == "/refresh":
-                send_telegram("[GRM] 수동 데이터 새로고침을 시작합니다...")
+                send_telegram("[GRM] Starting manual data refresh...")
                 await refresh_all()
-                send_telegram("[GRM] 새로고침 완료. " + _status_message())
+                send_telegram("[GRM] Refresh complete. " + _status_message())
             elif cmd == "/report":
                 payload = _build_report_payload(_compute_triggers_from_db())
                 send_telegram(payload.get("text", "[GRM] report unavailable")[:3500])
@@ -721,7 +721,7 @@ async def api_report():
 @app.post("/api/notify/test")
 async def api_test_notify():
     # Sends a test message (requires env configuration)
-    msg = "[GRM] Test notification: 설정이 정상 동작합니다."
+    msg = "[GRM] Test notification: configuration is working correctly."
     errs = []
     e1 = send_telegram(msg)
     if e1:

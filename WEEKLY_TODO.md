@@ -1,30 +1,30 @@
 # Weekly TODO — Global Risk Monitor (GRM)
 
 ## P1 (Must-do)
-1. Telegram 명령 안정화
-   - `/status`, `/refresh`, `/report`, `/triggers`, `/help` 운영 검증
-   - scheduler `max_instances` 경고 제거(중첩 실행 방지)
+1. Stabilize Telegram commands
+   - Validate operation of `/status`, `/refresh`, `/report`, `/triggers`, `/help`
+   - Remove scheduler `max_instances` warnings (prevent overlapping execution)
 
-2. 외부 접속 + 로그인 안정화
-   - HTTP/HTTPS 모드별 `GRM_COOKIE_SECURE` 운영 가이드 확정
-   - 로그인 실패/차단 정책 동작 재검증
+2. Stabilize external access + login
+   - Finalize operations guide for `GRM_COOKIE_SECURE` by HTTP/HTTPS mode
+   - Re-verify login failure/block policy behavior
 
-3. 운영 안전장치
-   - `/refresh` 중복 호출 시 락 처리(실행 중 재호출 차단)
+3. Operational safeguards
+   - Add lock handling for duplicate `/refresh` calls (block repeated call while running)
 
 ## P2
-4. 알림 소음 관리
-   - 반복 메시지 억제 정책 점검(해시/시간 창)
+4. Alert noise management
+   - Review repeated-message suppression policy (hash/time window)
 
-5. 문서 업데이트
-   - README에 Telegram 명령 사용법 추가
-   - HTTPS 전환 체크리스트 추가
+5. Documentation updates
+   - Add Telegram command usage to README
+   - Add HTTPS migration checklist
 
 ---
 
 # Day Plan (Today)
-1. `max_instances` 경고 재현 및 원인 고정
-2. Telegram poll job 중복 실행 방지 패치
-3. `/refresh` 락 처리 추가
-4. .env 운영 가이드(HTTP/HTTPS) 문서화
-5. 재시작 후 Telegram 명령 스모크 테스트
+1. Reproduce `max_instances` warning and lock down root cause
+2. Patch to prevent duplicate execution of Telegram poll job
+3. Add lock handling to `/refresh`
+4. Document .env operations guide (HTTP/HTTPS)
+5. Run Telegram command smoke tests after restart
