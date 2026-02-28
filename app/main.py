@@ -260,25 +260,88 @@ async def refresh_all() -> None:
         db.set_meta("last_refresh_errors", joined[:2000])
 
     
+def _find_7d_prior_value(labels: List[str], values: List[float]) -> float | None:
+    if not labels or not values or len(labels) != len(values):
+        return None
+    try:
+        dates = [pd.to_datetime(x).date() for x in labels]
+        last_date = dates[-1]
+        target = last_date - dt.timedelta(days=7)
+        idx = None
+        for i, d in enumerate(dates):
+            if d <= target:
+                idx = i
+        if idx is None:
+            return None
+        return float(values[idx])
+    except Exception:
+        return None
+
+
+def _threshold_overlays_for_series(series_id: str, labels: List[str], values: List[float], thresholds: Dict[str, float]) -> List[Dict]:
+    base = _find_7d_prior_value(labels, values)
+    if base is None:
+        return []
+
+    specs = {
+        "DGS10": {"key": "dgs10_bp", "kind": "bp_abs"},
+        "BAMLH0A0HYM2": {"key": "hy_oas_bp", "kind": "bp_abs"},
+        "DTWEXBGS": {"key": "dxy_pct", "kind": "pct_ge"},
+        "QQQ": {"key": "qqq_pct", "kind": "pct_le"},
+    }
+    spec = specs.get(series_id)
+    if not spec:
+        return []
+
+    th = thresholds.get(spec["key"])
+    if th is None:
+        return []
+
+    out: List[Dict] = []
+    if spec["kind"] == "bp_abs":
+        watch_delta = float(th) / 100.0
+        alert_delta = watch_delta * 1.5
+        out.extend([
+            {"label": f"WATCH +{float(th):.0f}bp", "value": base + watch_delta, "severity": "WATCH"},
+            {"label": f"WATCH -{float(th):.0f}bp", "value": base - watch_delta, "severity": "WATCH"},
+            {"label": f"ALERT +{float(th) * 1.5:.0f}bp", "value": base + alert_delta, "severity": "ALERT"},
+            {"label": f"ALERT -{float(th) * 1.5:.0f}bp", "value": base - alert_delta, "severity": "ALERT"},
+        ])
+    elif spec["kind"] == "pct_ge":
+        watch_mult = 1.0 + float(th) / 100.0
+        alert_mult = 1.0 + (float(th) * 1.5) / 100.0
+        out.extend([
+            {"label": f"WATCH ≥ {float(th):.2f}%", "value": base * watch_mult, "severity": "WATCH"},
+            {"label": f"ALERT ≥ {float(th) * 1.5:.2f}%", "value": base * alert_mult, "severity": "ALERT"},
+        ])
+    elif spec["kind"] == "pct_le":
+        watch_mult = 1.0 + float(th) / 100.0
+        alert_mult = 1.0 + (float(th) * 1.5) / 100.0
+        out.extend([
+            {"label": f"WATCH ≤ {float(th):.2f}%", "value": base * watch_mult, "severity": "WATCH"},
+            {"label": f"ALERT ≤ {float(th) * 1.5:.2f}%", "value": base * alert_mult, "severity": "ALERT"},
+        ])
+
+    return [x for x in out if pd.notna(x.get("value"))]
+
+
 def _series_to_json(series_id: str, limit: int = 365 * 2) -> Dict:
     rows = db.fetch_series(series_id, limit=5000)
     if not rows:
-        return {"id": series_id, "labels": [], "values": []}
+        return {"id": series_id, "labels": [], "values": [], "thresholds": []}
 
     df = pd.DataFrame(rows, columns=["date", "value"])
     df["date"] = pd.to_datetime(df["date"])
 
     # For nicer charts, keep last N days
     df = df.sort_values("date")
-    if series_id in EQUITY_TICKERS:
-        # equity stored in value column already (close)
-        y = df["value"].astype(float)
-    else:
-        y = df["value"].astype(float)
+    y = df["value"].astype(float)
 
     labels = [d.date().isoformat() for d in df["date"].tolist()[-limit:]]
     values = [float(x) for x in y.tolist()[-limit:]]
-    return {"id": series_id, "labels": labels, "values": values}
+    _cfg, merged_thresholds = load_thresholds(db)
+    thresholds = _threshold_overlays_for_series(series_id, labels, values, merged_thresholds)
+    return {"id": series_id, "labels": labels, "values": values, "thresholds": thresholds}
 
 
 def _load_for_triggers() -> Dict[str, pd.DataFrame]:

@@ -168,23 +168,41 @@ async function fetchSeries(id) {
   return await r.json();
 }
 
-function mkLineChart(canvasId, labels, data, yLabel) {
+function mkLineChart(canvasId, labels, data, yLabel, thresholds = []) {
   const ctx = document.getElementById(canvasId);
+  const datasets = [{
+    label: yLabel,
+    data,
+    tension: 0.2,
+    pointRadius: 0,
+    borderWidth: 2,
+    borderColor: '#60a5fa',
+  }];
+
+  (thresholds || []).forEach((th) => {
+    const isAlert = th.severity === 'ALERT';
+    datasets.push({
+      label: th.label,
+      data: labels.map(() => th.value),
+      pointRadius: 0,
+      borderWidth: isAlert ? 2 : 1.5,
+      borderDash: isAlert ? [6, 5] : [3, 4],
+      borderColor: isAlert ? '#fb7185' : '#fbbf24',
+      tension: 0,
+    });
+  });
+
   new Chart(ctx, {
     type: 'line',
-    data: {
-      labels,
-      datasets: [{
-        label: yLabel,
-        data,
-        tension: 0.2,
-        pointRadius: 0,
-        borderWidth: 2,
-      }]
-    },
+    data: { labels, datasets },
     options: {
       responsive: true,
-      plugins: { legend: { display: true } },
+      plugins: {
+        legend: {
+          display: true,
+          labels: { boxWidth: 12, boxHeight: 2, usePointStyle: false }
+        }
+      },
       scales: {
         x: { ticks: { maxTicksLimit: 8 } },
         y: { ticks: { maxTicksLimit: 6 } }
@@ -372,19 +390,19 @@ document.getElementById('pluginModal').addEventListener('click', (e) => { if(e.t
 (async () => {
   try {
     const dgs10 = await fetchSeries('DGS10');
-    mkLineChart('chart_dgs10', dgs10.labels, dgs10.values, 'Yield (%)');
+    mkLineChart('chart_dgs10', dgs10.labels, dgs10.values, 'Yield (%)', dgs10.thresholds);
 
     const hy = await fetchSeries('BAMLH0A0HYM2');
-    mkLineChart('chart_hy', hy.labels, hy.values, 'Spread (%)');
+    mkLineChart('chart_hy', hy.labels, hy.values, 'Spread (%)', hy.thresholds);
 
     const dxy = await fetchSeries('DTWEXBGS');
-    mkLineChart('chart_dxy', dxy.labels, dxy.values, 'Index');
+    mkLineChart('chart_dxy', dxy.labels, dxy.values, 'Index', dxy.thresholds);
 
     const qqq = await fetchSeries('QQQ');
-    mkLineChart('chart_qqq', qqq.labels, qqq.values, 'Close');
+    mkLineChart('chart_qqq', qqq.labels, qqq.values, 'Close', qqq.thresholds);
 
     const gdelt = await fetchSeries('GDELT');
-    mkLineChart('chart_gdelt', gdelt.labels, gdelt.values, 'Mentions');
+    mkLineChart('chart_gdelt', gdelt.labels, gdelt.values, 'Mentions', gdelt.thresholds);
 
   } catch (e) {
     console.error(e);
